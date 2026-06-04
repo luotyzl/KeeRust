@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KeeRust</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: system-ui, sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        background: #1a1a2e;
+        color: #eee;
+      }
+      .container { text-align: center; }
+      h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+      p.subtitle { color: #888; margin-bottom: 2rem; }
+      button {
+        padding: 0.6rem 1.5rem;
+        border: none;
+        border-radius: 6px;
+        background: #4a90e2;
+        color: white;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: #357abd; }
+      #greet-msg { margin-top: 1rem; font-size: 1.1rem; color: #7ec8e3; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>KeeRust</h1>
+      <p class="subtitle">Tauri 2 + Rust Backend</p>
+      <button id="greet-btn">Greet from Rust</button>
+      <p id="greet-msg"></p>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

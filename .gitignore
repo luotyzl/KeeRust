@@ -11,3 +11,15 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 keeweb/
+
+# Tauri / Rust
+target/
+src-tauri/target/
+gen/
+
+# Frontend build
+dist/
+node_modules/
+
+# Logs
+*.log
