@@ -15,5 +15,6 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-keepass = "0.6"
+keepass = { git = "https://github.com/sseemayer/keepass-rs" }
+secrecy = "0.10"
 tokio = { version = "1", features = ["full"] }

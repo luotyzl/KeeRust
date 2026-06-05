@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use secrecy::ExposeSecret;
 use std::io::Cursor;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -45,53 +46,45 @@ fn config_path(app: &tauri::AppHandle) -> PathBuf {
 fn get_field(entry: &keepass::db::Entry, key: &str) -> String {
     match entry.fields.get(key) {
         Some(keepass::db::Value::Unprotected(s)) => s.clone(),
-        Some(keepass::db::Value::Protected(s)) => {
-            String::from_utf8_lossy(s.unsecure()).to_string()
-        }
+        Some(keepass::db::Value::Protected(s)) => s.expose_secret().clone(),
         _ => String::new(),
     }
 }
 
 fn collect_nodes(
     group: &keepass::db::Group,
+    db: &keepass::Database,
     group_name: &str,
     group_uuid: &str,
     entries: &mut Vec<EntryData>,
     groups: &mut Vec<GroupData>,
 ) {
-    let mut local_count = 0usize;
-
-    for node in &group.children {
-        match node {
-            keepass::db::Node::Group(g) => {
-                let uuid = g.uuid.to_string();
-                let name = g.name.clone();
-                let before = entries.len();
-                // push placeholder, fill count after recursion
-                groups.push(GroupData { uuid: uuid.clone(), name: name.clone(), entry_count: 0 });
-                let idx = groups.len() - 1;
-                collect_nodes(g, &name, &uuid, entries, groups);
-                groups[idx].entry_count = entries.len() - before;
-            }
-            keepass::db::Node::Entry(e) => {
-                local_count += 1;
-                entries.push(EntryData {
-                    uuid: e.uuid.to_string(),
-                    title: get_field(e, "Title"),
-                    username: get_field(e, "UserName"),
-                    url: get_field(e, "URL"),
-                    notes: get_field(e, "Notes"),
-                    password: get_field(e, "Password"),
-                    group_name: group_name.to_string(),
-                    group_uuid: group_uuid.to_string(),
-                });
-            }
+    for entry_id in group.entry_ids() {
+        if let Some(e) = db.entry(entry_id) {
+            entries.push(EntryData {
+                uuid: entry_id.to_string(),
+                title: get_field(&e, "Title"),
+                username: get_field(&e, "UserName"),
+                url: get_field(&e, "URL"),
+                notes: get_field(&e, "Notes"),
+                password: get_field(&e, "Password"),
+                group_name: group_name.to_string(),
+                group_uuid: group_uuid.to_string(),
+            });
         }
     }
 
-    // Update the root-group entry count (first element after it was pushed by the caller).
-    // The caller updates its own slot; for the very first call we handle it in open_database.
-    let _ = local_count;
+    for group_id in group.group_ids() {
+        if let Some(g) = db.group(group_id) {
+            let uuid = group_id.to_string();
+            let name = g.name.clone();
+            let before = entries.len();
+            groups.push(GroupData { uuid: uuid.clone(), name: name.clone(), entry_count: 0 });
+            let idx = groups.len() - 1;
+            collect_nodes(&g, db, &name, &uuid, entries, groups);
+            groups[idx].entry_count = entries.len() - before;
+        }
+    }
 }
 
 #[tauri::command]
@@ -138,15 +131,15 @@ async fn open_database(app: tauri::AppHandle, password: String) -> Result<VaultD
     let db = keepass::Database::open(&mut cursor, key)
         .map_err(|e| format!("Failed to open database: {e}"))?;
 
-    let root_uuid = db.root.uuid.to_string();
-    let root_name = db.root.name.clone();
+    let root = db.root();
+    let root_uuid = root.id().to_string();
+    let root_name = root.name.clone();
 
     let mut entries: Vec<EntryData> = Vec::new();
     let mut groups: Vec<GroupData> = Vec::new();
 
-    collect_nodes(&db.root, &root_name, &root_uuid, &mut entries, &mut groups);
+    collect_nodes(&*root, &db, &root_name, &root_uuid, &mut entries, &mut groups);
 
-    // Prepend the root "All Entries" group with the total count
     groups.insert(0, GroupData {
         uuid: root_uuid,
         name: root_name,
