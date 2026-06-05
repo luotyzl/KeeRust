@@ -12,6 +12,26 @@ pub struct WebDavConfig {
 }
 
 #[derive(Serialize, Clone)]
+pub struct CustomField {
+    pub name: String,
+    pub value: String,
+    pub protected: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AttachmentInfo {
+    pub name: String,
+    pub size: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct HistoryEntry {
+    pub modified: String,
+    pub title: String,
+    pub username: String,
+}
+
+#[derive(Serialize, Clone)]
 pub struct EntryData {
     pub uuid: String,
     pub title: String,
@@ -21,6 +41,10 @@ pub struct EntryData {
     pub password: String,
     pub group_name: String,
     pub group_uuid: String,
+    pub custom_fields: Vec<CustomField>,
+    pub otp_uri: Option<String>,
+    pub attachments: Vec<AttachmentInfo>,
+    pub history: Vec<HistoryEntry>,
 }
 
 #[derive(Serialize, Clone)]
@@ -43,11 +67,72 @@ fn config_path(app: &tauri::AppHandle) -> PathBuf {
         .join("webdav_config.json")
 }
 
+const STANDARD_FIELDS: &[&str] = &["Title", "UserName", "Password", "URL", "Notes"];
+
+fn field_str(value: &keepass::db::Value<String>) -> String {
+    match value {
+        keepass::db::Value::Unprotected(s) => s.clone(),
+        keepass::db::Value::Protected(s) => s.expose_secret().clone(),
+    }
+}
+
 fn get_field(entry: &keepass::db::Entry, key: &str) -> String {
-    match entry.fields.get(key) {
-        Some(keepass::db::Value::Unprotected(s)) => s.clone(),
-        Some(keepass::db::Value::Protected(s)) => s.expose_secret().clone(),
-        _ => String::new(),
+    entry.fields.get(key).map(field_str).unwrap_or_default()
+}
+
+fn entry_to_data(
+    entry: &keepass::db::Entry,
+    entry_uuid: &str,
+    group_name: &str,
+    group_uuid: &str,
+    attachments: Vec<AttachmentInfo>,
+) -> EntryData {
+    let mut custom_fields: Vec<CustomField> = entry.fields.iter()
+        .filter(|(k, _)| !STANDARD_FIELDS.contains(&k.as_str()))
+        .filter(|(k, _)| k.as_str() != "otp" && !k.starts_with("TOTP") && !k.starts_with("HmacOtp"))
+        .map(|(k, v)| CustomField {
+            name: k.clone(),
+            value: field_str(v),
+            protected: matches!(v, keepass::db::Value::Protected(_)),
+        })
+        .collect();
+    custom_fields.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let otp_uri = entry.get_raw_otp_value().map(|s| s.to_string());
+
+    let history: Vec<HistoryEntry> = entry.history.as_ref()
+        .map(|h| h.get_entries().iter().map(|e| {
+            let modified = e.times.last_modification
+                .map(|t: chrono::NaiveDateTime| t.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default();
+            HistoryEntry {
+                modified,
+                title: get_field(e, "Title"),
+                username: get_field(e, "UserName"),
+            }
+        }).collect())
+        .unwrap_or_default();
+
+    EntryData {
+        uuid: entry_uuid.to_string(),
+        title: get_field(entry, "Title"),
+        username: get_field(entry, "UserName"),
+        url: get_field(entry, "URL"),
+        notes: get_field(entry, "Notes"),
+        password: get_field(entry, "Password"),
+        group_name: group_name.to_string(),
+        group_uuid: group_uuid.to_string(),
+        custom_fields,
+        otp_uri,
+        attachments,
+        history,
+    }
+}
+
+fn attachment_size(att: &keepass::db::Attachment) -> usize {
+    match &att.data {
+        keepass::db::Value::Unprotected(data) => data.len(),
+        keepass::db::Value::Protected(data) => data.expose_secret().len(),
     }
 }
 
@@ -61,16 +146,14 @@ fn collect_nodes(
 ) {
     for entry_id in group.entry_ids() {
         if let Some(e) = db.entry(entry_id) {
-            entries.push(EntryData {
-                uuid: entry_id.to_string(),
-                title: get_field(&e, "Title"),
-                username: get_field(&e, "UserName"),
-                url: get_field(&e, "URL"),
-                notes: get_field(&e, "Notes"),
-                password: get_field(&e, "Password"),
-                group_name: group_name.to_string(),
-                group_uuid: group_uuid.to_string(),
-            });
+            // attachments_named() requires EntryRef (has db context), call before deref
+            let attachments: Vec<AttachmentInfo> = e.attachments_named()
+                .map(|(name, att)| AttachmentInfo {
+                    name: name.to_string(),
+                    size: attachment_size(&att),
+                })
+                .collect();
+            entries.push(entry_to_data(&e, &entry_id.to_string(), group_name, group_uuid, attachments));
         }
     }
 

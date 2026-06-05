@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let vaultData = null;        // { groups, entries }
+let vaultData = null;
 let selectedGroupUuid = null;
 let selectedEntryUuid = null;
 let searchQuery = "";
+let otpTimers = [];  // clearInterval handles for active OTP countdowns
 
 // ── Screen helpers ────────────────────────────────────────────────────────────
 function show(id) {
@@ -52,6 +53,99 @@ async function copyText(text, label) {
   }
 }
 
+// ── TOTP implementation ───────────────────────────────────────────────────────
+function base32Decode(str) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  str = str.toUpperCase().replace(/[\s=]/g, "");
+  let bits = 0, value = 0;
+  const output = [];
+  for (const c of str) {
+    const idx = chars.indexOf(c);
+    if (idx < 0) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      output.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(output).buffer;
+}
+
+function parseOtpUri(uri) {
+  try {
+    const url = new URL(uri);
+    const params = new URLSearchParams(url.search);
+    return {
+      secret: params.get("secret") || "",
+      period: parseInt(params.get("period") || "30", 10),
+      digits: parseInt(params.get("digits") || "6", 10),
+      algorithm: (params.get("algorithm") || "SHA1").toUpperCase(),
+    };
+  } catch {
+    // bare secret fallback
+    return { secret: uri, period: 30, digits: 6, algorithm: "SHA1" };
+  }
+}
+
+async function computeTOTP(secret, period, digits) {
+  const keyData = base32Decode(secret);
+  if (!keyData || keyData.byteLength === 0) return null;
+
+  const counter = Math.floor(Date.now() / 1000 / period);
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setUint32(4, counter >>> 0, false);
+
+  const algo = { name: "HMAC", hash: "SHA-1" };
+  const key = await crypto.subtle.importKey("raw", keyData, algo, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, buf));
+
+  const offset = sig[sig.length - 1] & 0xf;
+  const code = (
+    ((sig[offset] & 0x7f) << 24) |
+    ((sig[offset + 1] & 0xff) << 16) |
+    ((sig[offset + 2] & 0xff) << 8) |
+    (sig[offset + 3] & 0xff)
+  ) % Math.pow(10, digits);
+
+  return String(code).padStart(digits, "0");
+}
+
+function stopOtpTimers() {
+  otpTimers.forEach(clearInterval);
+  otpTimers = [];
+}
+
+function startOtpWidget(container, otpUri) {
+  const { secret, period, digits } = parseOtpUri(otpUri);
+  if (!secret) return;
+
+  const codeEl = container.querySelector(".otp-code");
+  const barEl = container.querySelector(".otp-bar");
+  const secsEl = container.querySelector(".otp-secs");
+
+  async function refresh() {
+    const now = Math.floor(Date.now() / 1000);
+    const elapsed = now % period;
+    const remaining = period - elapsed;
+    const pct = (remaining / period) * 100;
+
+    barEl.style.width = pct + "%";
+    barEl.className = "otp-bar" + (remaining <= 5 ? " danger" : remaining <= 10 ? " warn" : "");
+    secsEl.textContent = remaining + "s";
+
+    // Only recompute code on new period
+    if (elapsed === 0 || codeEl.textContent === "------") {
+      const code = await computeTOTP(secret, period, digits);
+      codeEl.textContent = code || "------";
+    }
+  }
+
+  refresh();
+  const id = setInterval(refresh, 1000);
+  otpTimers.push(id);
+}
+
 // ── Render: group sidebar ─────────────────────────────────────────────────────
 function renderGroups() {
   const el = document.getElementById("group-list");
@@ -83,13 +177,9 @@ function renderGroups() {
 // ── Render: entry list ────────────────────────────────────────────────────────
 function filteredEntries() {
   let list = vaultData.entries;
-
-  // Filter by group (first group = root = all)
   if (selectedGroupUuid && selectedGroupUuid !== vaultData.groups[0]?.uuid) {
     list = list.filter((e) => e.group_uuid === selectedGroupUuid);
   }
-
-  // Filter by search
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
     list = list.filter(
@@ -99,7 +189,6 @@ function filteredEntries() {
         e.url.toLowerCase().includes(q)
     );
   }
-
   return list;
 }
 
@@ -139,6 +228,7 @@ function renderEntries() {
 
 // ── Render: detail panel ──────────────────────────────────────────────────────
 function renderDetail() {
+  stopOtpTimers();
   const el = document.getElementById("entry-detail");
 
   if (!selectedEntryUuid) {
@@ -158,24 +248,92 @@ function renderDetail() {
   const color = avatarColor(e.title);
   const letter = avatarLetter(e.title);
 
-  el.innerHTML = `
+  let html = `
     <div class="detail-title">
       <div class="detail-avatar" style="background:${color}">${escHtml(letter)}</div>
       ${escHtml(e.title || "(no title)")}
     </div>
-
     ${detailField("Username", e.username, true, false)}
     ${detailField("Password", e.password, true, true)}
     ${detailField("URL", e.url, true, false, true)}
-    ${e.notes ? detailNotes(e.notes) : ""}
+  `;
 
+  // OTP section
+  if (e.otp_uri) {
+    html += `
+      <div class="detail-field">
+        <div class="detail-label">One-Time Password</div>
+        <div class="otp-widget" data-uri="${escAttr(e.otp_uri)}">
+          <span class="otp-code">------</span>
+          <div class="otp-progress">
+            <div class="otp-bar"></div>
+          </div>
+          <span class="otp-secs">--s</span>
+          <button class="icon-btn otp-copy-btn">Copy</button>
+        </div>
+      </div>`;
+  }
+
+  // Notes
+  if (e.notes) {
+    html += `
+      <div class="detail-field">
+        <div class="detail-label">Notes</div>
+        <div class="detail-notes">${escHtml(e.notes)}</div>
+      </div>`;
+  }
+
+  // Custom fields
+  if (e.custom_fields.length > 0) {
+    html += `<div class="detail-section-header">Custom Fields</div>`;
+    for (const f of e.custom_fields) {
+      html += detailField(f.name, f.value, true, f.protected);
+    }
+  }
+
+  // Attachments
+  if (e.attachments.length > 0) {
+    html += `<div class="detail-section-header">Attachments</div>`;
+    for (const a of e.attachments) {
+      const kb = a.size > 0 ? ` (${formatSize(a.size)})` : "";
+      html += `
+        <div class="detail-attachment">
+          <span class="attachment-icon">📎</span>
+          <span class="attachment-name">${escHtml(a.name)}</span>
+          <span class="attachment-size">${kb}</span>
+        </div>`;
+    }
+  }
+
+  // Group tag
+  html += `
     <div class="detail-field">
       <div class="detail-label">Group</div>
       <div class="detail-group-tag">📁 ${escHtml(e.group_name)}</div>
-    </div>
-  `;
+    </div>`;
 
-  // Attach copy / reveal / open listeners
+  // History
+  if (e.history.length > 0) {
+    html += `
+      <div class="detail-section-header history-toggle" data-open="false">
+        History (${e.history.length})
+        <span class="history-chevron">▶</span>
+      </div>
+      <div class="history-list" style="display:none">`;
+    for (const h of [...e.history].reverse()) {
+      html += `
+        <div class="history-item">
+          <span class="history-time">${escHtml(h.modified)}</span>
+          <span class="history-title">${escHtml(h.title || "(no title)")}</span>
+          ${h.username ? `<span class="history-user">${escHtml(h.username)}</span>` : ""}
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  el.innerHTML = html;
+
+  // Wire up events
   el.querySelectorAll("[data-copy]").forEach((btn) => {
     btn.addEventListener("click", () => copyText(btn.dataset.copy, btn.dataset.label));
   });
@@ -201,6 +359,28 @@ function renderDetail() {
       if (url) window.open(url, "_blank");
     });
   });
+
+  // OTP widget
+  const otpWidget = el.querySelector(".otp-widget");
+  if (otpWidget) {
+    const uri = otpWidget.dataset.uri;
+    startOtpWidget(otpWidget, uri);
+    otpWidget.querySelector(".otp-copy-btn").addEventListener("click", async () => {
+      const code = otpWidget.querySelector(".otp-code").textContent;
+      if (code && code !== "------") await copyText(code, "OTP");
+    });
+  }
+
+  // History toggle
+  const histToggle = el.querySelector(".history-toggle");
+  if (histToggle) {
+    histToggle.addEventListener("click", () => {
+      const open = histToggle.dataset.open === "true";
+      histToggle.dataset.open = !open;
+      histToggle.querySelector(".history-chevron").textContent = open ? "▶" : "▼";
+      histToggle.nextElementSibling.style.display = open ? "none" : "block";
+    });
+  }
 }
 
 function detailField(label, value, showCopy, isPassword, isUrl) {
@@ -230,12 +410,10 @@ function detailField(label, value, showCopy, isPassword, isUrl) {
     </div>`;
 }
 
-function detailNotes(notes) {
-  return `
-    <div class="detail-field">
-      <div class="detail-label">Notes</div>
-      <div class="detail-notes">${escHtml(notes)}</div>
-    </div>`;
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
 // ── Escape helpers ────────────────────────────────────────────────────────────
@@ -313,7 +491,6 @@ document.getElementById("form-unlock").addEventListener("submit", async (e) => {
     vaultData = await invoke("open_database", { password });
     document.getElementById("master-pass").value = "";
 
-    // Select root group (all entries) by default
     selectedGroupUuid = vaultData.groups[0]?.uuid ?? null;
     selectedEntryUuid = null;
     searchQuery = "";
@@ -342,6 +519,7 @@ document.getElementById("search-input").addEventListener("input", (e) => {
 
 // ── Lock ──────────────────────────────────────────────────────────────────────
 document.getElementById("btn-lock").addEventListener("click", () => {
+  stopOtpTimers();
   vaultData = null;
   selectedGroupUuid = null;
   selectedEntryUuid = null;
