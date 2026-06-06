@@ -287,11 +287,36 @@
         display: flex; align-items: center; gap: 0.5rem;
         padding: 0.45rem 0.6rem;
         background: #1e2433; border: 1px solid #2d3748;
-        border-radius: 8px; margin-bottom: 0.5rem; font-size: 0.875rem;
+        border-radius: 8px; margin-bottom: 0.25rem; font-size: 0.875rem;
+        cursor: default;
       }
+      .detail-attachment:hover { border-color: #3d4f68; }
       .attachment-icon { flex-shrink: 0; }
       .attachment-name { flex: 1; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .attachment-size { font-size: 0.75rem; color: #64748b; white-space: nowrap; }
+
+      /* Attachment preview areas */
+      .attachment-preview {
+        margin-bottom: 0.75rem;
+        border: 1px solid #2d3748; border-radius: 8px; overflow: hidden;
+      }
+      .att-text-preview {
+        margin: 0; padding: 0.75rem;
+        background: #0d1117; color: #c9d1d9;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        font-size: 0.8rem; line-height: 1.5;
+        max-height: 300px; overflow-y: auto;
+        white-space: pre-wrap; word-break: break-word;
+      }
+      .att-image-preview {
+        display: block; max-width: 100%; max-height: 400px;
+        object-fit: contain; background: #0d1117;
+      }
+      .att-download-prompt {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.65rem 0.75rem; background: #1e2433;
+        color: #64748b; font-size: 0.875rem;
+      }
 
       /* History */
       .history-toggle {

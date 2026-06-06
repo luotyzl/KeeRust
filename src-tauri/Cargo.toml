@@ -18,4 +18,5 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 keepass = { git = "https://github.com/sseemayer/keepass-rs" }
 secrecy = "0.10"
 chrono = "0.4"
+base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
