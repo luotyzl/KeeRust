@@ -1865,6 +1865,7 @@ dependencies = [
 name = "keerust"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "keepass",
  "reqwest 0.12.28",

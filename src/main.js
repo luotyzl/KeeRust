@@ -294,14 +294,19 @@ function renderDetail() {
   // Attachments
   if (e.attachments.length > 0) {
     html += `<div class="detail-section-header">Attachments</div>`;
-    for (const a of e.attachments) {
-      const kb = a.size > 0 ? ` (${formatSize(a.size)})` : "";
+    for (let i = 0; i < e.attachments.length; i++) {
+      const a = e.attachments[i];
+      const kb = a.size > 0 ? formatSize(a.size) : "";
+      const canPreview = a.mime_type.startsWith("text/") || a.mime_type.startsWith("image/");
       html += `
-        <div class="detail-attachment">
-          <span class="attachment-icon">📎</span>
+        <div class="detail-attachment" data-att-idx="${i}">
+          <span class="attachment-icon">${attachmentIcon(a.mime_type)}</span>
           <span class="attachment-name">${escHtml(a.name)}</span>
           <span class="attachment-size">${kb}</span>
-        </div>`;
+          <button class="icon-btn att-dl-btn" data-att-idx="${i}">Save</button>
+          ${canPreview ? `<button class="icon-btn att-preview-btn" data-att-idx="${i}">View</button>` : ""}
+        </div>
+        <div class="attachment-preview" id="att-preview-${i}" style="display:none"></div>`;
     }
   }
 
@@ -371,6 +376,44 @@ function renderDetail() {
     });
   }
 
+  // Attachment save buttons
+  el.querySelectorAll(".att-dl-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.attIdx);
+      const a = e.attachments[idx];
+      downloadAttachment(a.name, a.mime_type, a.data_base64);
+    });
+  });
+
+  // Attachment preview buttons (and Shift+click on the row triggers download)
+  el.querySelectorAll(".att-preview-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.attIdx);
+      const a = e.attachments[idx];
+      const previewEl = document.getElementById(`att-preview-${idx}`);
+      if (previewEl.style.display !== "none") {
+        previewEl.style.display = "none";
+        previewEl.innerHTML = "";
+        btn.textContent = "View";
+      } else {
+        showAttachmentPreview(previewEl, a);
+        previewEl.style.display = "block";
+        btn.textContent = "Hide";
+      }
+    });
+  });
+
+  el.querySelectorAll(".detail-attachment").forEach((row) => {
+    row.addEventListener("click", (ev) => {
+      if (ev.target.closest("button")) return; // let buttons handle themselves
+      if (ev.shiftKey) {
+        const idx = parseInt(row.dataset.attIdx);
+        const a = e.attachments[idx];
+        downloadAttachment(a.name, a.mime_type, a.data_base64);
+      }
+    });
+  });
+
   // History toggle
   const histToggle = el.querySelector(".history-toggle");
   if (histToggle) {
@@ -408,6 +451,66 @@ function detailField(label, value, showCopy, isPassword, isUrl) {
         ${buttons}
       </div>
     </div>`;
+}
+
+// ── Attachment helpers ────────────────────────────────────────────────────────
+function base64ToBytes(b64) {
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+function downloadAttachment(name, mimeType, base64Data) {
+  const blob = new Blob([base64ToBytes(base64Data)], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function showAttachmentPreview(container, att) {
+  container.innerHTML = "";
+  const { mime_type, data_base64, name } = att;
+  const category = mime_type.split("/")[0];
+
+  if (category === "text") {
+    const bytes = base64ToBytes(data_base64);
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    const pre = document.createElement("pre");
+    pre.className = "att-text-preview";
+    pre.textContent = text;
+    container.appendChild(pre);
+
+  } else if (category === "image") {
+    const img = document.createElement("img");
+    img.className = "att-image-preview";
+    img.src = `data:${mime_type};base64,${data_base64}`;
+    img.alt = name;
+    container.appendChild(img);
+
+  } else {
+    container.innerHTML = `
+      <div class="att-download-prompt">
+        <span>No preview available for this file type.</span>
+        <button class="icon-btn" id="att-dl-fallback">Download</button>
+      </div>`;
+    container.querySelector("#att-dl-fallback")
+      .addEventListener("click", () => downloadAttachment(name, mime_type, data_base64));
+  }
+}
+
+function attachmentIcon(mimeType) {
+  const cat = mimeType.split("/")[0];
+  const sub = mimeType.split("/")[1] || "";
+  if (cat === "image") return "🖼";
+  if (cat === "text")  return "📄";
+  if (sub === "pdf")   return "📕";
+  return "📎";
 }
 
 function formatSize(bytes) {
