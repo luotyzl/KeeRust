@@ -349,6 +349,36 @@ pub async fn open_database(
     Ok(build_vault_data(db))
 }
 
+/// Force-fetch from WebDAV, update cache, and return fresh vault data.
+/// Used by the manual "Sync" button — bypasses local cache.
+#[tauri::command]
+pub async fn force_sync(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<VaultData, String> {
+    let config_str = std::fs::read_to_string(config_path(&app))
+        .map_err(|_| "WebDAV not configured".to_string())?;
+    let config: crate::webdav::WebDavConfig =
+        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    let remote_bytes = fetch_db_bytes(&config).await?;
+
+    let cache = cache_path(&app);
+    if let Some(p) = cache.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let _ = std::fs::write(&cache, &remote_bytes);
+
+    let mut cursor = Cursor::new(remote_bytes);
+    let db = keepass::Database::open(
+        &mut cursor,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to open database: {e}"))?;
+
+    Ok(build_vault_data(db))
+}
+
 #[tauri::command]
 pub async fn save_entry(
     app: tauri::AppHandle,

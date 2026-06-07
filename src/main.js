@@ -718,6 +718,42 @@ function escAttr(s) {
   return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// ── DB name footer ────────────────────────────────────────────────────────────
+function updateDbName() {
+  const name = vaultData?.groups[0]?.name || "—";
+  const el = document.getElementById("db-name");
+  if (el) { el.textContent = name; el.title = name; }
+}
+
+document.getElementById("btn-sync-now").addEventListener("click", async () => {
+  if (!masterPassword) return;
+  const btn = document.getElementById("btn-sync-now");
+  btn.classList.add("spinning");
+  btn.disabled = true;
+  setSyncDot("syncing");
+  try {
+    vaultData = await invoke("force_sync", { password: masterPassword });
+    selectedEntryUuid = null;
+    renderGroups();
+    renderEntries();
+    renderDetail();
+    updateDbName();
+    document.getElementById("sync-banner").classList.remove("visible");
+    setSyncDot("ok");
+    clearTimeout(syncDotTimer);
+    syncDotTimer = setTimeout(() => setSyncDot(""), 4000);
+    showToast("Synced from cloud");
+  } catch (err) {
+    setSyncDot("error");
+    clearTimeout(syncDotTimer);
+    syncDotTimer = setTimeout(() => setSyncDot(""), 4000);
+    showToast("Sync failed: " + String(err));
+  } finally {
+    btn.classList.remove("spinning");
+    btn.disabled = false;
+  }
+});
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   // Tauri event: background WebDAV sync found a newer remote version
@@ -744,6 +780,7 @@ async function init() {
       renderGroups();
       renderEntries();
       renderDetail();
+      updateDbName();
       showToast("Vault reloaded");
     } catch (err) {
       showToast("Reload failed: " + String(err));
@@ -826,6 +863,7 @@ document.getElementById("form-unlock").addEventListener("submit", async (e) => {
     renderGroups();
     renderEntries();
     renderDetail();
+    updateDbName();
     show("screen-vault");
     document.getElementById("search-input").focus();
   } catch (err) {
@@ -857,6 +895,7 @@ document.getElementById("btn-lock").addEventListener("click", () => {
   document.getElementById("search-input").value = "";
   document.getElementById("sync-banner").classList.remove("visible");
   setSyncDot("");
+  updateDbName();
   show("screen-unlock");
   document.getElementById("master-pass").focus();
 });
