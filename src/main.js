@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let vaultData = null;
@@ -29,6 +30,16 @@ function showToast(msg) {
   el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+}
+
+// ── Sync indicator ────────────────────────────────────────────────────────────
+let syncDotTimer;
+function setSyncDot(state) {
+  const dot = document.getElementById("sync-dot");
+  if (!dot) return;
+  dot.className = "sync-dot" + (state ? " " + state : "");
+  const labels = { syncing: "Syncing…", ok: "Synced", error: "Sync failed" };
+  dot.title = labels[state] || "";
 }
 
 // ── Avatar color ──────────────────────────────────────────────────────────────
@@ -582,6 +593,8 @@ function renderEditForm(entry) {
       renderEntries();
       renderDetail();
       showToast(isNew ? "Entry added" : "Entry saved");
+      // Cache write done; background PUT is in progress
+      setSyncDot("syncing");
     } catch (err) {
       showToast("Save failed: " + String(err));
       saveBtn.disabled = false;
@@ -707,6 +720,40 @@ function escAttr(s) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // Tauri event: background WebDAV sync found a newer remote version
+  await listen("db-remote-updated", () => {
+    document.getElementById("sync-banner").classList.add("visible");
+  });
+
+  // Tauri event: background PUT completed (ok or error)
+  await listen("sync-status", (ev) => {
+    const { ok, error } = ev.payload;
+    setSyncDot(ok ? "ok" : "error");
+    if (!ok) showToast("WebDAV sync failed: " + error);
+    clearTimeout(syncDotTimer);
+    syncDotTimer = setTimeout(() => setSyncDot(""), 4000);
+  });
+
+  // Banner: reload from (already-updated) cache
+  document.getElementById("btn-reload-vault").addEventListener("click", async () => {
+    document.getElementById("sync-banner").classList.remove("visible");
+    if (!masterPassword) return;
+    try {
+      vaultData = await invoke("open_database", { password: masterPassword });
+      selectedEntryUuid = null;
+      renderGroups();
+      renderEntries();
+      renderDetail();
+      showToast("Vault reloaded");
+    } catch (err) {
+      showToast("Reload failed: " + String(err));
+    }
+  });
+
+  document.getElementById("btn-dismiss-banner").addEventListener("click", () => {
+    document.getElementById("sync-banner").classList.remove("visible");
+  });
+
   const config = await invoke("get_webdav_config");
   if (config) {
     document.getElementById("vault-source").textContent = config.url;
@@ -808,6 +855,8 @@ document.getElementById("btn-lock").addEventListener("click", () => {
   selectedEntryUuid = null;
   searchQuery = "";
   document.getElementById("search-input").value = "";
+  document.getElementById("sync-banner").classList.remove("visible");
+  setSyncDot("");
   show("screen-unlock");
   document.getElementById("master-pass").focus();
 });

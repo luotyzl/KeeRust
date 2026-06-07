@@ -124,6 +124,38 @@
       }
       .btn-lock:hover { border-color: #4a90e2; color: #4a90e2; }
 
+      /* Sync indicator */
+      .sync-dot {
+        width: 7px; height: 7px; border-radius: 50%;
+        background: transparent; flex-shrink: 0;
+        transition: background 0.4s;
+      }
+      .sync-dot.syncing {
+        background: #4a90e2;
+        animation: sync-pulse 1s ease-in-out infinite;
+      }
+      .sync-dot.ok { background: #1abc9c; }
+      .sync-dot.error { background: #e74c3c; }
+      @keyframes sync-pulse {
+        0%, 100% { opacity: 1; } 50% { opacity: 0.25; }
+      }
+
+      /* Remote-update banner — fixed overlay just below the header */
+      .sync-banner {
+        position: fixed; top: 48px; left: 0; right: 0; z-index: 200;
+        display: none; align-items: center; justify-content: center;
+        gap: 0.75rem; padding: 0.35rem 1rem;
+        background: #1a2540; border-bottom: 1px solid #2d4a7a;
+        font-size: 0.8rem; color: #90b8f0;
+      }
+      .sync-banner.visible { display: flex; }
+      .sync-banner button {
+        padding: 0.2rem 0.6rem; border: 1px solid #4a90e2;
+        border-radius: 4px; background: none; color: #4a90e2;
+        font-size: 0.78rem; cursor: pointer;
+      }
+      .sync-banner button:hover { background: #4a90e220; }
+
       /* Sidebar */
       .vault-sidebar {
         grid-area: sidebar;
@@ -484,9 +516,15 @@
         <div class="vault-search-wrap">
           <input type="search" id="search-input" placeholder="Search entries…" />
         </div>
+        <span class="sync-dot" id="sync-dot" title="Sync status"></span>
         <button class="btn-lock" id="btn-add-entry">+ New</button>
         <button class="btn-lock" id="btn-lock">🔒 Lock</button>
       </header>
+      <div class="sync-banner" id="sync-banner">
+        Remote database was updated.
+        <button id="btn-reload-vault">Reload</button>
+        <button id="btn-dismiss-banner">Dismiss</button>
+      </div>
 
       <nav class="vault-sidebar" id="group-list"></nav>
 
