@@ -9,6 +9,7 @@ pub fn run() {
             webdav::get_webdav_config,
             webdav::save_webdav_config,
             vault::open_database,
+            vault::save_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

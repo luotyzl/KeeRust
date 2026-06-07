@@ -1,12 +1,12 @@
 use base64::prelude::*;
 use secrecy::ExposeSecret;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 use crate::attachments::mime_type;
-use crate::webdav::{fetch_db_bytes, config_path};
+use crate::webdav::{config_path, fetch_db_bytes, put_db_bytes};
 
-// ── Data structures sent to the frontend ──────────────────────────────────────
+// ── Outbound data structures ──────────────────────────────────────────────────
 
 #[derive(Serialize, Clone)]
 pub struct CustomField {
@@ -59,6 +59,34 @@ pub struct VaultData {
     pub entries: Vec<EntryData>,
 }
 
+#[derive(Serialize)]
+pub struct SaveResult {
+    pub vault: VaultData,
+    pub saved_uuid: String,
+}
+
+// ── Inbound data structures (from JS) ─────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CustomFieldUpdate {
+    pub name: String,
+    pub value: String,
+    pub protected: bool,
+}
+
+#[derive(Deserialize)]
+pub struct EntryUpdate {
+    pub uuid: String,       // empty = new entry
+    pub group_uuid: String, // group to add to (new) or current group (unused for edit)
+    pub title: String,
+    pub username: String,
+    pub password: String,
+    pub url: String,
+    pub notes: String,
+    pub otp_uri: String, // empty = no OTP
+    pub custom_fields: Vec<CustomFieldUpdate>,
+}
+
 // ── Field helpers ─────────────────────────────────────────────────────────────
 
 const STANDARD_FIELDS: &[&str] = &["Title", "UserName", "Password", "URL", "Notes"];
@@ -81,6 +109,33 @@ fn attachment_bytes(att: &keepass::db::Attachment) -> Vec<u8> {
     }
 }
 
+/// Overwrite an entry's fields with values from an EntryUpdate.
+/// Clears all non-standard fields first, then sets everything fresh.
+fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
+    // Remove all custom / OTP fields; keep only the 5 standard fields
+    entry
+        .fields
+        .retain(|k, _| STANDARD_FIELDS.contains(&k.as_str()));
+
+    entry.set_unprotected("Title", &update.title);
+    entry.set_unprotected("UserName", &update.username);
+    entry.set_protected("Password", &update.password);
+    entry.set_unprotected("URL", &update.url);
+    entry.set_unprotected("Notes", &update.notes);
+
+    if !update.otp_uri.is_empty() {
+        entry.set_unprotected("otp", &update.otp_uri);
+    }
+
+    for cf in &update.custom_fields {
+        if cf.protected {
+            entry.set_protected(&cf.name, &cf.value);
+        } else {
+            entry.set_unprotected(&cf.name, &cf.value);
+        }
+    }
+}
+
 // ── Entry builder ─────────────────────────────────────────────────────────────
 
 fn entry_to_data(
@@ -90,7 +145,9 @@ fn entry_to_data(
     group_uuid: &str,
     attachments: Vec<AttachmentInfo>,
 ) -> EntryData {
-    let mut custom_fields: Vec<CustomField> = entry.fields.iter()
+    let mut custom_fields: Vec<CustomField> = entry
+        .fields
+        .iter()
         .filter(|(k, _)| !STANDARD_FIELDS.contains(&k.as_str()))
         .filter(|(k, _)| {
             let k = k.as_str();
@@ -106,14 +163,23 @@ fn entry_to_data(
 
     let otp_uri = entry.get_raw_otp_value().map(|s| s.to_string());
 
-    let history: Vec<HistoryEntry> = entry.history.as_ref()
-        .map(|h| h.get_entries().iter().map(|e| HistoryEntry {
-            modified: e.times.last_modification
-                .map(|t: chrono::NaiveDateTime| t.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_default(),
-            title: get_field(e, "Title"),
-            username: get_field(e, "UserName"),
-        }).collect())
+    let history: Vec<HistoryEntry> = entry
+        .history
+        .as_ref()
+        .map(|h| {
+            h.get_entries()
+                .iter()
+                .map(|e| HistoryEntry {
+                    modified: e
+                        .times
+                        .last_modification
+                        .map(|t: chrono::NaiveDateTime| t.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_default(),
+                    title: get_field(e, "Title"),
+                    username: get_field(e, "UserName"),
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     EntryData {
@@ -144,8 +210,8 @@ fn collect_nodes(
 ) {
     for entry_id in group.entry_ids() {
         if let Some(e) = db.entry(entry_id) {
-            // attachments_named() needs EntryRef (has db context) — collect before deref
-            let attachments: Vec<AttachmentInfo> = e.attachments_named()
+            let attachments: Vec<AttachmentInfo> = e
+                .attachments_named()
                 .map(|(name, att)| {
                     let bytes = attachment_bytes(&att);
                     AttachmentInfo {
@@ -156,7 +222,13 @@ fn collect_nodes(
                     }
                 })
                 .collect();
-            entries.push(entry_to_data(&e, &entry_id.to_string(), group_name, group_uuid, attachments));
+            entries.push(entry_to_data(
+                &e,
+                &entry_id.to_string(),
+                group_name,
+                group_uuid,
+                attachments,
+            ));
         }
     }
 
@@ -165,7 +237,11 @@ fn collect_nodes(
             let uuid = group_id.to_string();
             let name = g.name.clone();
             let before = entries.len();
-            groups.push(GroupData { uuid: uuid.clone(), name: name.clone(), entry_count: 0 });
+            groups.push(GroupData {
+                uuid: uuid.clone(),
+                name: name.clone(),
+                entry_count: 0,
+            });
             let idx = groups.len() - 1;
             collect_nodes(&g, db, &name, &uuid, entries, groups);
             groups[idx].entry_count = entries.len() - before;
@@ -173,10 +249,35 @@ fn collect_nodes(
     }
 }
 
-// ── Tauri command ─────────────────────────────────────────────────────────────
+fn build_vault_data(db: keepass::Database) -> VaultData {
+    let root = db.root();
+    let root_uuid = root.id().to_string();
+    let root_name = root.name.clone();
+
+    let mut entries: Vec<EntryData> = Vec::new();
+    let mut groups: Vec<GroupData> = Vec::new();
+
+    collect_nodes(&*root, &db, &root_name, &root_uuid, &mut entries, &mut groups);
+
+    groups.insert(
+        0,
+        GroupData {
+            uuid: root_uuid,
+            name: root_name,
+            entry_count: entries.len(),
+        },
+    );
+
+    VaultData { groups, entries }
+}
+
+// ── Tauri commands ────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn open_database(app: tauri::AppHandle, password: String) -> Result<VaultData, String> {
+pub async fn open_database(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<VaultData, String> {
     let config_str = std::fs::read_to_string(config_path(&app))
         .map_err(|_| "WebDAV not configured".to_string())?;
     let config: crate::webdav::WebDavConfig =
@@ -189,20 +290,76 @@ pub async fn open_database(app: tauri::AppHandle, password: String) -> Result<Va
     let db = keepass::Database::open(&mut cursor, key)
         .map_err(|e| format!("Failed to open database: {e}"))?;
 
-    let root = db.root();
-    let root_uuid = root.id().to_string();
-    let root_name = root.name.clone();
+    Ok(build_vault_data(db))
+}
 
-    let mut entries: Vec<EntryData> = Vec::new();
-    let mut groups: Vec<GroupData> = Vec::new();
+#[tauri::command]
+pub async fn save_entry(
+    app: tauri::AppHandle,
+    password: String,
+    entry: EntryUpdate,
+) -> Result<SaveResult, String> {
+    let config_str = std::fs::read_to_string(config_path(&app))
+        .map_err(|_| "WebDAV not configured".to_string())?;
+    let config: crate::webdav::WebDavConfig =
+        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
 
-    collect_nodes(&*root, &db, &root_name, &root_uuid, &mut entries, &mut groups);
+    let bytes = fetch_db_bytes(&config).await?;
+    let mut cursor = Cursor::new(bytes);
 
-    groups.insert(0, GroupData {
-        uuid: root_uuid,
-        name: root_name,
-        entry_count: entries.len(),
-    });
+    let mut db = keepass::Database::open(
+        &mut cursor,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to open database: {e}"))?;
 
-    Ok(VaultData { groups, entries })
+    let saved_uuid = if entry.uuid.is_empty() {
+        // New entry: add to the specified group
+        let group_uuid = uuid::Uuid::parse_str(&entry.group_uuid)
+            .map_err(|e| format!("Invalid group UUID: {e}"))?;
+        let group_id = keepass::db::GroupId::from_uuid(group_uuid);
+        let mut group = db
+            .group_mut(group_id)
+            .ok_or_else(|| "Group not found".to_string())?;
+        let mut e = group.add_entry();
+        let id_str = e.id().to_string();
+        apply_fields(&mut *e, &entry);
+        id_str
+    } else {
+        // Existing entry: find and update
+        let entry_uuid = uuid::Uuid::parse_str(&entry.uuid)
+            .map_err(|e| format!("Invalid entry UUID: {e}"))?;
+        let entry_id = keepass::db::EntryId::from_uuid(entry_uuid);
+        {
+            let mut e = db
+                .entry_mut(entry_id)
+                .ok_or_else(|| "Entry not found".to_string())?;
+            apply_fields(&mut *e, &entry);
+        }
+        entry.uuid.clone()
+    };
+
+    // Serialize modified database
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut saved_bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to save: {e}"))?;
+
+    // Upload to WebDAV
+    put_db_bytes(&config, saved_bytes.clone()).await?;
+
+    // Reload vault data from the bytes we just saved
+    let mut cursor2 = Cursor::new(saved_bytes);
+    let db2 = keepass::Database::open(
+        &mut cursor2,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to reload: {e}"))?;
+
+    Ok(SaveResult {
+        vault: build_vault_data(db2),
+        saved_uuid,
+    })
 }
