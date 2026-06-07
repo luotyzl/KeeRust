@@ -1022,6 +1022,38 @@ document.getElementById("search-input").addEventListener("input", (e) => {
   renderDetail();
 });
 
+// ── Type-to-search (KeeWeb-style) ─────────────────────────────────────────────
+// Pressing any printable key while the vault is open jumps focus into the search
+// box and feeds it the character — no need to click the field first.
+function isEditableTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
+
+document.addEventListener("keydown", (e) => {
+  // Only when the vault screen is the active one
+  if (!document.getElementById("screen-vault").classList.contains("active")) return;
+  // Not while the edit form is open
+  if (editMode) return;
+  // Not while the confirm modal is open
+  if (!document.getElementById("delete-modal").classList.contains("hidden")) return;
+  // Let command shortcuts (Ctrl/Alt/Meta) through; Shift is allowed for symbols/caps
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  // Don't hijack when the user is already typing in a field
+  if (isEditableTarget(document.activeElement)) return;
+  // Only printable single characters (letters, digits, punctuation) — excludes
+  // Enter/Tab/Escape/arrows/etc. (multi-char e.key) and the space bar.
+  if (e.key.length !== 1 || e.key === " ") return;
+
+  const search = document.getElementById("search-input");
+  search.value = e.key;
+  search.focus();
+  try { search.setSelectionRange(1, 1); } catch {}
+  search.dispatchEvent(new Event("input")); // reuse the search handler above
+  e.preventDefault();
+});
+
 // ── Lock ──────────────────────────────────────────────────────────────────────
 document.getElementById("btn-lock").addEventListener("click", () => {
   stopOtpTimers();
