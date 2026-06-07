@@ -58,6 +58,7 @@ pub struct GroupData {
 pub struct VaultData {
     pub groups: Vec<GroupData>,
     pub entries: Vec<EntryData>,
+    pub recycle_bin_uuid: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -264,21 +265,36 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
     let root_uuid = root.id().to_string();
     let root_name = root.name.clone();
 
+    let recycle_bin_uuid = db
+        .meta
+        .recyclebin_uuid
+        .map(|u| keepass::db::GroupId::from_uuid(u).to_string());
+
     let mut entries: Vec<EntryData> = Vec::new();
     let mut groups: Vec<GroupData> = Vec::new();
 
     collect_nodes(&*root, &db, &root_name, &root_uuid, &mut entries, &mut groups);
+
+    // "All Entries" count excludes anything that lives in the Recycle Bin
+    let non_recycled = entries
+        .iter()
+        .filter(|e| Some(&e.group_uuid) != recycle_bin_uuid.as_ref())
+        .count();
 
     groups.insert(
         0,
         GroupData {
             uuid: root_uuid,
             name: root_name,
-            entry_count: entries.len(),
+            entry_count: non_recycled,
         },
     );
 
-    VaultData { groups, entries }
+    VaultData {
+        groups,
+        entries,
+        recycle_bin_uuid,
+    }
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -347,6 +363,95 @@ pub async fn open_database(
     }
 
     Ok(build_vault_data(db))
+}
+
+/// Move an entry to the Recycle Bin (creating it if needed), save locally and push to WebDAV.
+#[tauri::command]
+pub async fn delete_entry(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    let config_str = std::fs::read_to_string(config_path(&app))
+        .map_err(|_| "WebDAV not configured".to_string())?;
+    let config: crate::webdav::WebDavConfig =
+        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    let cache = cache_path(&app);
+    let bytes = if cache.exists() {
+        std::fs::read(&cache).map_err(|e| format!("Cache read failed: {e}"))?
+    } else {
+        let b = fetch_db_bytes(&config).await?;
+        if let Some(p) = cache.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        b
+    };
+
+    let mut cursor = Cursor::new(bytes);
+    let mut db = keepass::Database::open(
+        &mut cursor,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to open database: {e}"))?;
+
+    // Get or create the Recycle Bin group
+    let recycle_bin_id = if let Some(rb) = db.recycle_bin() {
+        rb.id()
+    } else {
+        let id = {
+            let mut root = db.root_mut();
+            let mut new_group = root.add_group();
+            new_group.name = "Recycle Bin".to_string();
+            new_group.id()
+        };
+        db.meta.recyclebin_uuid = Some(id.uuid());
+        db.meta.recyclebin_enabled = Some(true);
+        id
+    };
+
+    let entry_uuid = uuid::Uuid::parse_str(&uuid)
+        .map_err(|e| format!("Invalid UUID: {e}"))?;
+    let entry_id = keepass::db::EntryId::from_uuid(entry_uuid);
+    db.entry_mut(entry_id)
+        .ok_or_else(|| "Entry not found".to_string())?
+        .move_to(recycle_bin_id)
+        .map_err(|_| "Failed to move entry to Recycle Bin".to_string())?;
+
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut saved_bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to save: {e}"))?;
+
+    let _ = std::fs::write(&cache, &saved_bytes);
+
+    let db2 = {
+        let mut c = Cursor::new(saved_bytes.clone());
+        keepass::Database::open(
+            &mut c,
+            keepass::DatabaseKey::new().with_password(&password),
+        )
+        .map_err(|e| format!("Failed to reload: {e}"))?
+    };
+
+    {
+        let app2 = app.clone();
+        let config2 = config;
+        tauri::async_runtime::spawn(async move {
+            match put_db_bytes(&config2, saved_bytes).await {
+                Ok(_) => {
+                    app2.emit("sync-status", serde_json::json!({"ok": true})).ok();
+                }
+                Err(e) => {
+                    app2.emit("sync-status", serde_json::json!({"ok": false, "error": e})).ok();
+                }
+            }
+        });
+    }
+
+    Ok(build_vault_data(db2))
 }
 
 /// Force-fetch from WebDAV, update cache, and return fresh vault data.

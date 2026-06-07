@@ -10,6 +10,7 @@ pub fn run() {
             webdav::save_webdav_config,
             vault::open_database,
             vault::force_sync,
+            vault::delete_entry,
             vault::save_entry,
         ])
         .run(tauri::generate_context!())
