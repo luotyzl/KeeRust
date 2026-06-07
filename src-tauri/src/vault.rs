@@ -45,6 +45,8 @@ pub struct EntryData {
     pub otp_uri: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub history: Vec<HistoryEntry>,
+    pub icon_id: i64,                       // built-in icon index 0-68, or -1 if custom
+    pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
 }
 
 #[derive(Serialize, Clone)]
@@ -87,6 +89,8 @@ pub struct EntryUpdate {
     pub notes: String,
     pub otp_uri: String, // empty = no OTP
     pub custom_fields: Vec<CustomFieldUpdate>,
+    pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave the existing icon unchanged
+    pub custom_icon_base64: Option<String>, // when set, store as a new custom icon (e.g. favicon)
 }
 
 // ── Cache path ────────────────────────────────────────────────────────────────
@@ -118,6 +122,21 @@ fn attachment_bytes(att: &keepass::db::Attachment) -> Vec<u8> {
         keepass::db::Value::Unprotected(data) => data.clone(),
         keepass::db::Value::Protected(data) => data.expose_secret().clone(),
     }
+}
+
+/// Apply the chosen icon to an entry. A supplied custom icon (e.g. a downloaded
+/// favicon) takes priority; otherwise a built-in index >= 0 is set; otherwise the
+/// existing icon is left untouched.
+fn apply_icon(e: &mut keepass::db::EntryMut<'_>, update: &EntryUpdate) -> Result<(), String> {
+    if let Some(b64) = &update.custom_icon_base64 {
+        let bytes = BASE64_STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Invalid icon data: {e}"))?;
+        e.set_icon_custom_new(bytes);
+    } else if update.icon_id >= 0 {
+        e.set_icon_builtin(update.icon_id as usize);
+    }
+    Ok(())
 }
 
 /// Overwrite an entry's fields with values from an EntryUpdate.
@@ -155,6 +174,8 @@ fn entry_to_data(
     group_name: &str,
     group_uuid: &str,
     attachments: Vec<AttachmentInfo>,
+    icon_id: i64,
+    custom_icon_base64: Option<String>,
 ) -> EntryData {
     let mut custom_fields: Vec<CustomField> = entry
         .fields
@@ -206,6 +227,8 @@ fn entry_to_data(
         otp_uri,
         attachments,
         history,
+        icon_id,
+        custom_icon_base64,
     }
 }
 
@@ -233,12 +256,27 @@ fn collect_nodes(
                     }
                 })
                 .collect();
+
+            // Resolve the entry's icon: built-in index, or raw bytes for a custom icon
+            let (icon_id, custom_icon_base64) = match e.icon() {
+                Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None),
+                Some(keepass::db::Icon::Custom(_)) => {
+                    let data = e
+                        .custom_icon()
+                        .map(|ci| BASE64_STANDARD.encode(&ci.data));
+                    (-1, data)
+                }
+                None => (0, None), // default to the key icon
+            };
+
             entries.push(entry_to_data(
                 &e,
                 &entry_id.to_string(),
                 group_name,
                 group_uuid,
                 attachments,
+                icon_id,
+                custom_icon_base64,
             ));
         }
     }
@@ -584,6 +622,8 @@ pub async fn save_entry(
         let mut e = group.add_entry();
         let id_str = e.id().to_string();
         apply_fields(&mut *e, &entry);
+        // Icon must be set on the EntryMut (needs DB access for custom-icon storage)
+        apply_icon(&mut e, &entry)?;
         id_str
     } else {
         // Existing entry: find and update
@@ -595,6 +635,7 @@ pub async fn save_entry(
                 .entry_mut(entry_id)
                 .ok_or_else(|| "Entry not found".to_string())?;
             apply_fields(&mut *e, &entry);
+            apply_icon(&mut e, &entry)?;
         }
         entry.uuid.clone()
     };

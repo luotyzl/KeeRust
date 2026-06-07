@@ -1,4 +1,5 @@
 mod attachments;
+mod favicon;
 mod vault;
 mod webdav;
 
@@ -14,6 +15,7 @@ pub fn run() {
             vault::restore_entry,
             vault::delete_entry_permanent,
             vault::save_entry,
+            favicon::fetch_favicon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

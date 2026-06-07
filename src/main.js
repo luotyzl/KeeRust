@@ -67,6 +67,30 @@ function avatarLetter(title) {
   return (title || "?")[0].toUpperCase();
 }
 
+// ── KDBX built-in icons (indices 0-68, matching KeeWeb's icon order) ───────────
+// Mapped to emoji so we need no icon font. Index = the KDBX IconID.
+const ICON_EMOJI = [
+  "🔑", "🌐", "⚠️", "🗄️", "📌", "💬", "🧩", "📝", "🔌", "🪪",   // 0-9
+  "📎", "📷", "📶", "🔗", "🔋", "🏷️", "📜", "🎯", "🖥️", "✉️",   // 10-19
+  "⚙️", "📋", "📨", "📰", "⚡", "📥", "💾", "💽", "🔘", "🔐",   // 20-29
+  "⌨️", "🖨️", "📊", "🏁", "🔧", "💻", "📦", "💳", "🪟", "⏰",   // 30-39
+  "🔍", "⚗️", "🎮", "🗑️", "🗒️", "🚫", "❓", "🧊", "📁", "📂",   // 40-49
+  "🗃️", "🔓", "🔒", "✅", "✏️", "🖼️", "📖", "📃", "🕵️", "🍴",   // 50-59
+  "🏠", "⭐", "🐧", "📍", "🍎", "📚", "💲", "✍️", "📱",            // 60-68
+];
+function iconEmoji(id) {
+  return ICON_EMOJI[id] || ICON_EMOJI[0];
+}
+
+// Returns the inner markup for an avatar circle: a custom PNG image if present,
+// otherwise the entry's built-in icon emoji.
+function avatarInner(e) {
+  if (e.custom_icon_base64) {
+    return `<img class="avatar-img" src="data:image/png;base64,${e.custom_icon_base64}" alt="" />`;
+  }
+  return `<span class="avatar-emoji">${iconEmoji(e.icon_id)}</span>`;
+}
+
 // ── Copy to clipboard ─────────────────────────────────────────────────────────
 async function copyText(text, label) {
   try {
@@ -263,14 +287,14 @@ function renderEntries() {
   el.innerHTML = "";
   for (const e of entries) {
     const color = avatarColor(e.title);
-    const letter = avatarLetter(e.title);
     const subtitle = e.username || e.url || e.group_name;
+    const bg = e.custom_icon_base64 ? "transparent" : color;
 
     const item = document.createElement("div");
     item.className = "entry-item" + (e.uuid === selectedEntryUuid ? " active" : "");
     item.dataset.uuid = e.uuid;
     item.innerHTML = `
-      <div class="entry-avatar" style="background:${color}">${escHtml(letter)}</div>
+      <div class="entry-avatar" style="background:${bg}">${avatarInner(e)}</div>
       <div class="entry-info">
         <div class="entry-title">${escHtml(e.title || "(no title)")}</div>
         <div class="entry-sub">${escHtml(subtitle)}</div>
@@ -305,11 +329,11 @@ function renderDetail() {
   if (!e) return;
 
   const color = avatarColor(e.title);
-  const letter = avatarLetter(e.title);
+  const detailBg = e.custom_icon_base64 ? "transparent" : color;
 
   let html = `
     <div class="detail-title">
-      <div class="detail-avatar" style="background:${color}">${escHtml(letter)}</div>
+      <div class="detail-avatar" style="background:${detailBg}">${avatarInner(e)}</div>
       <span style="flex:1">${escHtml(e.title || "(no title)")}</span>
       <button class="icon-btn detail-edit-btn" id="btn-edit-entry">Edit</button>
     </div>
@@ -518,21 +542,48 @@ function renderEditForm(entry) {
     group_uuid: selectedGroupUuid || vaultData?.groups[0]?.uuid || "",
     title: "", username: "", password: "", url: "", notes: "",
     otp_uri: null, custom_fields: [],
+    icon_id: 0, custom_icon_base64: null,
   };
 
-  const color = avatarColor(e.title || "New");
-  const letter = avatarLetter(e.title || "+");
+  // Currently chosen icon: built-in index, or -1 to keep an existing custom icon
+  let selectedIconId = typeof e.icon_id === "number" ? e.icon_id : 0;
+  // A freshly downloaded favicon (base64 PNG) overrides everything else when set
+  let pendingCustomIcon = null;
+
+  const previewCustomIcon = () =>
+    pendingCustomIcon || (selectedIconId < 0 ? e.custom_icon_base64 : null);
+
+  const editAvatarInner = () => {
+    const custom = previewCustomIcon();
+    if (custom) {
+      return `<img class="avatar-img" src="data:image/png;base64,${custom}" alt="" />`;
+    }
+    return `<span class="avatar-emoji">${iconEmoji(selectedIconId < 0 ? 0 : selectedIconId)}</span>`;
+  };
+  const editAvatarBg = () =>
+    previewCustomIcon() ? "transparent" : avatarColor(e.title || "New");
 
   let cfHtml = "";
   for (const cf of e.custom_fields) {
     cfHtml += cfRowHtml(cf.name, cf.value, cf.protected);
   }
 
+  let iconGridHtml = "";
+  for (let i = 0; i < ICON_EMOJI.length; i++) {
+    iconGridHtml += `<button type="button" class="icon-pick${i === selectedIconId ? " selected" : ""}" data-icon="${i}">${ICON_EMOJI[i]}</button>`;
+  }
+
   el.innerHTML = `
     <div class="edit-form">
       <div class="edit-header">
-        <div class="detail-avatar" id="edit-avatar" style="background:${color}">${escHtml(letter)}</div>
+        <button type="button" class="detail-avatar edit-avatar-btn" id="edit-avatar" style="background:${editAvatarBg()}" title="Change icon">${editAvatarInner()}</button>
         <input class="edit-title-input" id="edit-title" value="${escAttr(e.title)}" placeholder="Entry title" autocomplete="off" />
+      </div>
+      <div class="edit-icon-grid" id="edit-icon-grid" style="display:none">
+        <div class="icon-grid-tools">
+          <button type="button" class="btn-favicon" id="edit-get-favicon">⬇ Download favicon from URL</button>
+        </div>
+        <div class="icon-grid-cells">${iconGridHtml}</div>
       </div>
 
       <div class="edit-section-header">Credentials</div>
@@ -578,15 +629,59 @@ function renderEditForm(entry) {
     </div>
   `;
 
-  // Live-update avatar as title changes
   const titleInput = el.querySelector("#edit-title");
   const avatarEl = el.querySelector("#edit-avatar");
-  titleInput.addEventListener("input", () => {
-    const t = titleInput.value;
-    avatarEl.style.background = avatarColor(t || "New");
-    avatarEl.textContent = avatarLetter(t || "+");
-  });
+  const iconGrid = el.querySelector("#edit-icon-grid");
+
+  const refreshAvatar = () => {
+    avatarEl.style.background = editAvatarBg();
+    avatarEl.innerHTML = editAvatarInner();
+  };
+
+  // Keep the avatar's color in sync with the title (when showing an emoji)
+  titleInput.addEventListener("input", refreshAvatar);
   titleInput.focus();
+
+  // Click avatar → toggle the icon picker grid
+  avatarEl.addEventListener("click", () => {
+    iconGrid.style.display = iconGrid.style.display === "none" ? "block" : "none";
+  });
+
+  // Pick a built-in icon (clears any pending favicon)
+  iconGrid.addEventListener("click", (ev) => {
+    const btn = ev.target.closest(".icon-pick");
+    if (!btn) return;
+    selectedIconId = parseInt(btn.dataset.icon, 10);
+    pendingCustomIcon = null;
+    iconGrid.querySelectorAll(".icon-pick.selected").forEach((b) => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    refreshAvatar();
+    iconGrid.style.display = "none";
+  });
+
+  // Download favicon from the entry's URL
+  el.querySelector("#edit-get-favicon").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    const url = el.querySelector("#edit-url").value.trim();
+    if (!url) { showToast("Enter a URL first"); return; }
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Fetching favicon…";
+    try {
+      const b64 = await invoke("fetch_favicon", { url });
+      pendingCustomIcon = b64;
+      selectedIconId = -1; // custom icon takes over
+      iconGrid.querySelectorAll(".icon-pick.selected").forEach((b) => b.classList.remove("selected"));
+      refreshAvatar();
+      iconGrid.style.display = "none";
+      showToast("Favicon downloaded");
+    } catch (err) {
+      showToast("Favicon failed: " + String(err));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
 
   // Password show/hide
   const passInput = el.querySelector("#edit-password");
@@ -641,6 +736,8 @@ function renderEditForm(entry) {
       notes: el.querySelector("#edit-notes").value,
       otp_uri: el.querySelector("#edit-otp").value.trim(),
       custom_fields: customFields,
+      icon_id: selectedIconId, // -1 keeps an existing custom icon untouched
+      custom_icon_base64: pendingCustomIcon, // set only when a favicon was just downloaded
     };
 
     const saveBtn = el.querySelector("#edit-save");

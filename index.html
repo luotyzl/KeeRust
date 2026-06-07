@@ -317,6 +317,51 @@
         display: flex; align-items: center; justify-content: center;
         font-size: 1.1rem; font-weight: 700; color: #fff; flex-shrink: 0;
       }
+      /* Icon glyph / custom image inside avatars */
+      .entry-avatar .avatar-emoji { font-size: 1rem; line-height: 1; }
+      .detail-avatar .avatar-emoji { font-size: 1.25rem; line-height: 1; }
+      .avatar-img {
+        width: 100%; height: 100%; object-fit: contain;
+        border-radius: inherit; display: block;
+      }
+      /* Clickable avatar in the edit form */
+      .edit-avatar-btn {
+        border: none; cursor: pointer; padding: 0;
+        transition: filter 0.15s; position: relative;
+      }
+      .edit-avatar-btn:hover { filter: brightness(1.15); }
+      .edit-avatar-btn::after {
+        content: "✎"; position: absolute; right: -3px; bottom: -3px;
+        width: 16px; height: 16px; border-radius: 50%;
+        background: #4a90e2; color: #fff; font-size: 0.6rem;
+        display: flex; align-items: center; justify-content: center;
+        border: 2px solid #0f1117;
+      }
+      /* Built-in icon picker grid */
+      .edit-icon-grid {
+        margin: 0.5rem 0 0.25rem; padding: 0.5rem;
+        background: #161b27; border: 1px solid #2d3748; border-radius: 8px;
+      }
+      .icon-grid-tools { margin-bottom: 0.5rem; }
+      .btn-favicon {
+        width: 100%; padding: 0.4rem 0.6rem;
+        background: none; border: 1px dashed #2d4a7a; border-radius: 6px;
+        color: #90b8f0; font-size: 0.78rem; cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .btn-favicon:hover:not(:disabled) { background: #1a254030; border-color: #4a90e2; }
+      .btn-favicon:disabled { opacity: 0.6; cursor: default; }
+      .icon-grid-cells {
+        display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px;
+        max-height: 180px; overflow-y: auto;
+      }
+      .icon-pick {
+        aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+        background: none; border: 1px solid transparent; border-radius: 6px;
+        font-size: 1rem; cursor: pointer; transition: background 0.1s, border-color 0.1s;
+      }
+      .icon-pick:hover { background: #1e2433; }
+      .icon-pick.selected { background: #1e3a5f; border-color: #4a90e2; }
       .detail-field { margin-bottom: 1.25rem; }
       .detail-label {
         font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
