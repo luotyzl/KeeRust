@@ -5,7 +5,9 @@ let vaultData = null;
 let selectedGroupUuid = null;
 let selectedEntryUuid = null;
 let searchQuery = "";
-let otpTimers = [];  // clearInterval handles for active OTP countdowns
+let otpTimers = [];
+let masterPassword = "";
+let editMode = false;
 
 // ── Screen helpers ────────────────────────────────────────────────────────────
 function show(id) {
@@ -251,7 +253,8 @@ function renderDetail() {
   let html = `
     <div class="detail-title">
       <div class="detail-avatar" style="background:${color}">${escHtml(letter)}</div>
-      ${escHtml(e.title || "(no title)")}
+      <span style="flex:1">${escHtml(e.title || "(no title)")}</span>
+      <button class="icon-btn detail-edit-btn" id="btn-edit-entry">Edit</button>
     </div>
     ${detailField("Username", e.username, true, false)}
     ${detailField("Password", e.password, true, true)}
@@ -424,6 +427,179 @@ function renderDetail() {
       histToggle.nextElementSibling.style.display = open ? "none" : "block";
     });
   }
+
+  // Edit button
+  el.querySelector("#btn-edit-entry")?.addEventListener("click", () => renderEditForm(e));
+}
+
+// ── Edit form ─────────────────────────────────────────────────────────────────
+function renderEditForm(entry) {
+  stopOtpTimers();
+  editMode = true;
+  const el = document.getElementById("entry-detail");
+  const isNew = !entry;
+
+  const e = entry || {
+    uuid: "",
+    group_uuid: selectedGroupUuid || vaultData?.groups[0]?.uuid || "",
+    title: "", username: "", password: "", url: "", notes: "",
+    otp_uri: null, custom_fields: [],
+  };
+
+  const color = avatarColor(e.title || "New");
+  const letter = avatarLetter(e.title || "+");
+
+  let cfHtml = "";
+  for (const cf of e.custom_fields) {
+    cfHtml += cfRowHtml(cf.name, cf.value, cf.protected);
+  }
+
+  el.innerHTML = `
+    <div class="edit-form">
+      <div class="edit-header">
+        <div class="detail-avatar" id="edit-avatar" style="background:${color}">${escHtml(letter)}</div>
+        <input class="edit-title-input" id="edit-title" value="${escAttr(e.title)}" placeholder="Entry title" />
+      </div>
+
+      <div class="edit-section-header">Credentials</div>
+      <div class="edit-field-group">
+        <label class="edit-label">Username</label>
+        <div class="edit-field-row">
+          <input class="edit-input" id="edit-username" value="${escAttr(e.username)}" placeholder="Username" autocomplete="off" />
+        </div>
+      </div>
+      <div class="edit-field-group">
+        <label class="edit-label">Password</label>
+        <div class="edit-field-row">
+          <input class="edit-input" id="edit-password" type="password" value="${escAttr(e.password)}" autocomplete="new-password" />
+          <button class="icon-btn" id="edit-pass-toggle">Show</button>
+        </div>
+      </div>
+      <div class="edit-field-group">
+        <label class="edit-label">URL</label>
+        <div class="edit-field-row">
+          <input class="edit-input" id="edit-url" value="${escAttr(e.url)}" placeholder="https://" />
+        </div>
+      </div>
+
+      <div class="edit-section-header">Notes</div>
+      <textarea class="edit-textarea" id="edit-notes" placeholder="Notes...">${escHtml(e.notes)}</textarea>
+
+      <div class="edit-section-header">OTP</div>
+      <div class="edit-field-row" style="margin-bottom:0.25rem">
+        <input class="edit-input" id="edit-otp" value="${escAttr(e.otp_uri || "")}"
+               placeholder="otpauth://totp/Account?secret=BASE32SECRET" />
+      </div>
+
+      <div class="edit-section-header">
+        <span>Custom Fields</span>
+        <button class="icon-btn" id="edit-add-cf">+ Add Field</button>
+      </div>
+      <div id="edit-cf-container">${cfHtml}</div>
+
+      <div class="edit-actions">
+        <button class="btn-save-entry" id="edit-save">Save</button>
+        <button class="btn-cancel-entry" id="edit-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  // Live-update avatar as title changes
+  const titleInput = el.querySelector("#edit-title");
+  const avatarEl = el.querySelector("#edit-avatar");
+  titleInput.addEventListener("input", () => {
+    const t = titleInput.value;
+    avatarEl.style.background = avatarColor(t || "New");
+    avatarEl.textContent = avatarLetter(t || "+");
+  });
+  titleInput.focus();
+
+  // Password show/hide
+  const passInput = el.querySelector("#edit-password");
+  el.querySelector("#edit-pass-toggle").addEventListener("click", (ev) => {
+    if (passInput.type === "password") { passInput.type = "text"; ev.target.textContent = "Hide"; }
+    else { passInput.type = "password"; ev.target.textContent = "Show"; }
+  });
+
+  // Add custom field row
+  el.querySelector("#edit-add-cf").addEventListener("click", () => {
+    const container = el.querySelector("#edit-cf-container");
+    const div = document.createElement("div");
+    div.innerHTML = cfRowHtml("", "", false);
+    const row = div.firstElementChild;
+    container.appendChild(row);
+    row.querySelector(".edit-cf-name").focus();
+  });
+
+  // Delete custom field (delegated)
+  el.querySelector("#edit-cf-container").addEventListener("click", (ev) => {
+    if (ev.target.classList.contains("edit-cf-del")) {
+      ev.target.closest(".edit-cf-row").remove();
+    }
+  });
+
+  // Cancel
+  el.querySelector("#edit-cancel").addEventListener("click", () => {
+    editMode = false;
+    renderDetail();
+  });
+
+  // Save
+  el.querySelector("#edit-save").addEventListener("click", async () => {
+    const title = el.querySelector("#edit-title").value.trim();
+    if (!title) { showToast("Title is required"); return; }
+
+    const customFields = [];
+    el.querySelectorAll(".edit-cf-row").forEach((row) => {
+      const name = row.querySelector(".edit-cf-name").value.trim();
+      const value = row.querySelector(".edit-cf-value").value;
+      const prot = row.querySelector(".edit-cf-protected").checked;
+      if (name) customFields.push({ name, value, protected: prot });
+    });
+
+    const update = {
+      uuid: isNew ? "" : e.uuid,
+      group_uuid: e.group_uuid,
+      title,
+      username: el.querySelector("#edit-username").value,
+      password: el.querySelector("#edit-password").value,
+      url: el.querySelector("#edit-url").value,
+      notes: el.querySelector("#edit-notes").value,
+      otp_uri: el.querySelector("#edit-otp").value.trim(),
+      custom_fields: customFields,
+    };
+
+    const saveBtn = el.querySelector("#edit-save");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+
+    try {
+      const result = await invoke("save_entry", { password: masterPassword, entry: update });
+      vaultData = result.vault;
+      selectedEntryUuid = result.saved_uuid;
+      editMode = false;
+      renderGroups();
+      renderEntries();
+      renderDetail();
+      showToast(isNew ? "Entry added" : "Entry saved");
+    } catch (err) {
+      showToast("Save failed: " + String(err));
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
+    }
+  });
+}
+
+function cfRowHtml(name, value, isProtected) {
+  return `
+    <div class="edit-cf-row">
+      <input class="edit-input edit-cf-name" value="${escAttr(name)}" placeholder="Field name" />
+      <input class="edit-input edit-cf-value" value="${escAttr(value)}" placeholder="Value" />
+      <label class="edit-cf-protected-label">
+        <input type="checkbox" class="edit-cf-protected"${isProtected ? " checked" : ""}> Protected
+      </label>
+      <button class="icon-btn edit-cf-del">×</button>
+    </div>`;
 }
 
 function detailField(label, value, showCopy, isPassword, isUrl) {
@@ -592,11 +768,13 @@ document.getElementById("form-unlock").addEventListener("submit", async (e) => {
 
   try {
     vaultData = await invoke("open_database", { password });
+    masterPassword = password;
     document.getElementById("master-pass").value = "";
 
     selectedGroupUuid = vaultData.groups[0]?.uuid ?? null;
     selectedEntryUuid = null;
     searchQuery = "";
+    editMode = false;
 
     renderGroups();
     renderEntries();
@@ -624,12 +802,19 @@ document.getElementById("search-input").addEventListener("input", (e) => {
 document.getElementById("btn-lock").addEventListener("click", () => {
   stopOtpTimers();
   vaultData = null;
+  masterPassword = "";
+  editMode = false;
   selectedGroupUuid = null;
   selectedEntryUuid = null;
   searchQuery = "";
   document.getElementById("search-input").value = "";
   show("screen-unlock");
   document.getElementById("master-pass").focus();
+});
+
+// ── Add new entry ─────────────────────────────────────────────────────────────
+document.getElementById("btn-add-entry").addEventListener("click", () => {
+  if (vaultData) renderEditForm(null);
 });
 
 // ── Change config ─────────────────────────────────────────────────────────────

@@ -206,6 +206,7 @@
       .detail-title {
         font-size: 1.25rem; font-weight: 700; color: #fff;
         margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem;
+        flex-wrap: nowrap;
       }
       .detail-avatar {
         width: 40px; height: 40px; border-radius: 10px;
@@ -336,6 +337,84 @@
       .history-title { color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .history-user { color: #4a5568; font-size: 0.72rem; white-space: nowrap; flex-shrink: 0; }
 
+      /* ── Edit form ───────────────────────────────────────── */
+      .edit-form { display: flex; flex-direction: column; gap: 0; }
+      .edit-header {
+        display: flex; align-items: center; gap: 0.75rem;
+        margin-bottom: 1.25rem;
+      }
+      .edit-title-input {
+        flex: 1; font-size: 1.15rem; font-weight: 700;
+        background: transparent; border: none; border-bottom: 2px solid #2d3748;
+        color: #fff; padding: 0.25rem 0; outline: none;
+        transition: border-color 0.15s;
+      }
+      .edit-title-input:focus { border-bottom-color: #4a90e2; }
+      .edit-section-header {
+        font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.08em; color: #4a5568;
+        margin: 1.25rem 0 0.5rem; padding-bottom: 0.3rem;
+        border-bottom: 1px solid #1e2a3a;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .edit-field-group { margin-bottom: 0.75rem; }
+      .edit-label {
+        font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.07em; color: #4a5568; margin-bottom: 0.3rem;
+        display: block;
+      }
+      .edit-field-row {
+        display: flex; align-items: center; gap: 0.4rem;
+      }
+      .edit-input {
+        flex: 1; padding: 0.5rem 0.7rem;
+        background: #1e2433; border: 1px solid #2d3748;
+        border-radius: 7px; color: #e2e8f0; font-size: 0.875rem;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        outline: none; transition: border-color 0.15s; min-width: 0;
+      }
+      .edit-input:focus { border-color: #4a90e2; }
+      .edit-textarea {
+        width: 100%; padding: 0.6rem 0.75rem;
+        background: #1e2433; border: 1px solid #2d3748;
+        border-radius: 7px; color: #e2e8f0; font-size: 0.875rem;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        outline: none; transition: border-color 0.15s;
+        resize: vertical; min-height: 80px; line-height: 1.5;
+      }
+      .edit-textarea:focus { border-color: #4a90e2; }
+      .edit-cf-row {
+        display: flex; align-items: center; gap: 0.4rem;
+        margin-bottom: 0.4rem;
+      }
+      .edit-cf-name { flex: 0 0 35%; }
+      .edit-cf-value { flex: 1; }
+      .edit-cf-protected-label {
+        display: flex; align-items: center; gap: 0.25rem;
+        font-size: 0.75rem; color: #64748b; white-space: nowrap; flex-shrink: 0;
+        cursor: pointer;
+      }
+      .edit-cf-protected-label input { cursor: pointer; }
+      .edit-actions {
+        display: flex; gap: 0.6rem; margin-top: 1.75rem; padding-top: 1rem;
+        border-top: 1px solid #1e2a3a;
+      }
+      .btn-save-entry {
+        padding: 0.55rem 1.2rem; background: #4a90e2;
+        border: none; border-radius: 7px; color: #fff;
+        font-size: 0.875rem; font-weight: 600; cursor: pointer;
+        transition: background 0.15s, opacity 0.15s;
+      }
+      .btn-save-entry:hover:not(:disabled) { background: #357abd; }
+      .btn-save-entry:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-cancel-entry {
+        padding: 0.55rem 1.2rem; background: none;
+        border: 1px solid #2d3748; border-radius: 7px; color: #94a3b8;
+        font-size: 0.875rem; cursor: pointer; transition: border-color 0.15s, color 0.15s;
+      }
+      .btn-cancel-entry:hover { border-color: #4a5568; color: #e2e8f0; }
+      .detail-edit-btn { margin-left: auto; }
+
       .copied-toast {
         position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
         background: #1e3a5f; color: #93c5fd; border: 1px solid #2563eb;
@@ -405,6 +484,7 @@
         <div class="vault-search-wrap">
           <input type="search" id="search-input" placeholder="Search entries…" />
         </div>
+        <button class="btn-lock" id="btn-add-entry">+ New</button>
         <button class="btn-lock" id="btn-lock">🔒 Lock</button>
       </header>
 
