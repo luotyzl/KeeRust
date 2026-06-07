@@ -494,8 +494,8 @@
 
       /* Delete button in detail panel */
       .detail-actions-row {
-        padding: 0.75rem 1.25rem 1rem 0.75rem;
-        display: flex; gap: 0.5rem;
+        padding: 0.75rem 1.25rem 1rem;
+        display: flex; gap: 0.5rem; justify-content: flex-end;
       }
       .btn-danger {
         padding: 0.35rem 0.9rem; background: none;
@@ -504,6 +504,13 @@
         transition: background 0.15s, border-color 0.15s;
       }
       .btn-danger:hover { background: #7f1d1d30; border-color: #991b1b; }
+      .btn-restore {
+        padding: 0.35rem 0.9rem; background: none;
+        border: 1px solid #166534; border-radius: 6px;
+        color: #86efac; font-size: 0.8rem; cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .btn-restore:hover { background: #16653430; border-color: #15803d; }
 
       /* Confirmation modal */
       .modal-overlay {
@@ -567,15 +574,15 @@
             <label for="dav-url">WebDAV URL</label>
             <input type="url" id="dav-url"
               placeholder="https://cloud.example.com/vault.kdbx"
-              pattern="^https://.+" required />
+              pattern="^https://.+" autocomplete="off" required />
           </div>
           <div class="form-group">
             <label for="dav-user">Username</label>
-            <input type="text" id="dav-user" autocomplete="username" required />
+            <input type="text" id="dav-user" autocomplete="off" required />
           </div>
           <div class="form-group">
             <label for="dav-pass">Password</label>
-            <input type="password" id="dav-pass" autocomplete="current-password" required />
+            <input type="password" id="dav-pass" autocomplete="off" required />
           </div>
           <div id="config-error" class="error"></div>
           <button type="submit" class="btn">Save & Continue</button>
@@ -594,7 +601,7 @@
         <form id="form-unlock" novalidate>
           <div class="form-group">
             <label for="master-pass">Master Password</label>
-            <input type="password" id="master-pass" autocomplete="current-password" required />
+            <input type="password" id="master-pass" autocomplete="off" required />
           </div>
           <div id="unlock-error" class="error"></div>
           <button type="submit" class="btn" id="btn-unlock">Unlock</button>
@@ -609,7 +616,7 @@
       <header class="vault-header">
         <span class="vault-brand">KeeRust</span>
         <div class="vault-search-wrap">
-          <input type="search" id="search-input" placeholder="Search entries…" />
+          <input type="search" id="search-input" placeholder="Search entries…" autocomplete="off" />
         </div>
         <span class="sync-dot" id="sync-dot" title="Sync status"></span>
         <button class="btn-lock" id="btn-add-entry">+ New</button>
@@ -652,8 +659,8 @@
     <!-- Delete confirmation modal -->
     <div class="modal-overlay hidden" id="delete-modal">
       <div class="modal-box">
-        <div class="modal-title">Move to Recycle Bin</div>
-        <div class="modal-body">
+        <div class="modal-title" id="modal-title">Move to Recycle Bin</div>
+        <div class="modal-body" id="modal-body">
           Move <strong id="modal-entry-name"></strong> to the Recycle Bin?
         </div>
         <div class="modal-actions">
