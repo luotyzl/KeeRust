@@ -357,8 +357,18 @@ function renderDetail() {
       <div class="detail-group-tag">📁 ${escHtml(e.group_name)}</div>
     </div>`;
 
-  // Delete action
-  html += `<div class="detail-actions-row"><button class="btn-danger" id="btn-delete-entry">Delete</button></div>`;
+  // Delete / restore actions
+  const inRecycleBin = vaultData.recycle_bin_uuid && e.group_uuid === vaultData.recycle_bin_uuid;
+  if (inRecycleBin) {
+    html += `<div class="detail-actions-row">
+      <button class="btn-restore" id="btn-restore-entry">Recover</button>
+      <button class="btn-danger" id="btn-delete-entry">Delete Forever</button>
+    </div>`;
+  } else {
+    html += `<div class="detail-actions-row">
+      <button class="btn-danger" id="btn-delete-entry">Delete</button>
+    </div>`;
+  }
 
   // History
   if (e.history.length > 0) {
@@ -471,8 +481,9 @@ function renderDetail() {
   // Edit button
   el.querySelector("#btn-edit-entry")?.addEventListener("click", () => renderEditForm(e));
 
-  // Delete button
-  el.querySelector("#btn-delete-entry")?.addEventListener("click", () => showDeleteModal(e));
+  // Delete / restore buttons
+  el.querySelector("#btn-delete-entry")?.addEventListener("click", () => showDeleteModal(e, inRecycleBin));
+  el.querySelector("#btn-restore-entry")?.addEventListener("click", () => restoreEntry(e));
 }
 
 // ── Edit form ─────────────────────────────────────────────────────────────────
@@ -501,7 +512,7 @@ function renderEditForm(entry) {
     <div class="edit-form">
       <div class="edit-header">
         <div class="detail-avatar" id="edit-avatar" style="background:${color}">${escHtml(letter)}</div>
-        <input class="edit-title-input" id="edit-title" value="${escAttr(e.title)}" placeholder="Entry title" />
+        <input class="edit-title-input" id="edit-title" value="${escAttr(e.title)}" placeholder="Entry title" autocomplete="off" />
       </div>
 
       <div class="edit-section-header">Credentials</div>
@@ -514,14 +525,14 @@ function renderEditForm(entry) {
       <div class="edit-field-group">
         <label class="edit-label">Password</label>
         <div class="edit-field-row">
-          <input class="edit-input" id="edit-password" type="password" value="${escAttr(e.password)}" autocomplete="new-password" />
+          <input class="edit-input" id="edit-password" type="password" value="${escAttr(e.password)}" autocomplete="off" />
           <button class="icon-btn" id="edit-pass-toggle">Show</button>
         </div>
       </div>
       <div class="edit-field-group">
         <label class="edit-label">URL</label>
         <div class="edit-field-row">
-          <input class="edit-input" id="edit-url" value="${escAttr(e.url)}" placeholder="https://" />
+          <input class="edit-input" id="edit-url" value="${escAttr(e.url)}" placeholder="https://" autocomplete="off" />
         </div>
       </div>
 
@@ -531,7 +542,7 @@ function renderEditForm(entry) {
       <div class="edit-section-header">OTP</div>
       <div class="edit-field-row" style="margin-bottom:0.25rem">
         <input class="edit-input" id="edit-otp" value="${escAttr(e.otp_uri || "")}"
-               placeholder="otpauth://totp/Account?secret=BASE32SECRET" />
+               placeholder="otpauth://totp/Account?secret=BASE32SECRET" autocomplete="off" />
       </div>
 
       <div class="edit-section-header">
@@ -638,8 +649,8 @@ function renderEditForm(entry) {
 function cfRowHtml(name, value, isProtected) {
   return `
     <div class="edit-cf-row">
-      <input class="edit-input edit-cf-name" value="${escAttr(name)}" placeholder="Field name" />
-      <input class="edit-input edit-cf-value" value="${escAttr(value)}" placeholder="Value" />
+      <input class="edit-input edit-cf-name" value="${escAttr(name)}" placeholder="Field name" autocomplete="off" />
+      <input class="edit-input edit-cf-value" value="${escAttr(value)}" placeholder="Value" autocomplete="off" />
       <label class="edit-cf-protected-label">
         <input type="checkbox" class="edit-cf-protected"${isProtected ? " checked" : ""}> Protected
       </label>
@@ -752,13 +763,31 @@ function escAttr(s) {
 
 // ── Delete modal ──────────────────────────────────────────────────────────────
 let pendingDeleteEntry = null;
+let pendingDeletePermanent = false;
 
-function showDeleteModal(entry) {
+function showDeleteModal(entry, permanent) {
   pendingDeleteEntry = entry;
-  document.getElementById("modal-entry-name").textContent = entry.title || "(no title)";
+  pendingDeletePermanent = !!permanent;
+
+  const name = entry.title || "(no title)";
+  const title = document.getElementById("modal-title");
+  const body = document.getElementById("modal-body");
+  const confirm = document.getElementById("modal-confirm");
+
+  if (permanent) {
+    title.textContent = "Delete Forever";
+    body.innerHTML =
+      `Permanently delete <strong>${escHtml(name)}</strong>? ` +
+      `This <strong>cannot be undone</strong> — the entry will be gone forever.`;
+    confirm.textContent = "Delete Forever";
+  } else {
+    title.textContent = "Move to Recycle Bin";
+    body.innerHTML = `Move <strong>${escHtml(name)}</strong> to the Recycle Bin?`;
+    confirm.textContent = "Move to Recycle Bin";
+  }
+
+  confirm.disabled = false;
   document.getElementById("delete-modal").classList.remove("hidden");
-  document.getElementById("modal-confirm").disabled = false;
-  document.getElementById("modal-confirm").textContent = "Move to Recycle Bin";
 }
 
 function hideDeleteModal() {
@@ -774,12 +803,14 @@ document.getElementById("delete-modal").addEventListener("click", (ev) => {
 
 document.getElementById("modal-confirm").addEventListener("click", async () => {
   if (!pendingDeleteEntry) return;
+  const permanent = pendingDeletePermanent;
   const btn = document.getElementById("modal-confirm");
+  const restoreLabel = permanent ? "Delete Forever" : "Move to Recycle Bin";
   btn.disabled = true;
-  btn.textContent = "Moving…";
+  btn.textContent = permanent ? "Deleting…" : "Moving…";
 
   try {
-    vaultData = await invoke("delete_entry", {
+    vaultData = await invoke(permanent ? "delete_entry_permanent" : "delete_entry", {
       password: masterPassword,
       uuid: pendingDeleteEntry.uuid,
     });
@@ -789,13 +820,31 @@ document.getElementById("modal-confirm").addEventListener("click", async () => {
     renderEntries();
     renderDetail();
     setSyncDot("syncing");
-    showToast("Moved to Recycle Bin");
+    showToast(permanent ? "Deleted permanently" : "Moved to Recycle Bin");
   } catch (err) {
     btn.disabled = false;
-    btn.textContent = "Move to Recycle Bin";
+    btn.textContent = restoreLabel;
     showToast("Failed: " + String(err));
   }
 });
+
+// ── Restore from Recycle Bin ──────────────────────────────────────────────────
+async function restoreEntry(entry) {
+  try {
+    vaultData = await invoke("restore_entry", {
+      password: masterPassword,
+      uuid: entry.uuid,
+    });
+    selectedEntryUuid = null;
+    renderGroups();
+    renderEntries();
+    renderDetail();
+    setSyncDot("syncing");
+    showToast("Entry recovered");
+  } catch (err) {
+    showToast("Recover failed: " + String(err));
+  }
+}
 
 // ── DB name footer ────────────────────────────────────────────────────────────
 function updateDbName() {

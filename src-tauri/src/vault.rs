@@ -365,13 +365,38 @@ pub async fn open_database(
     Ok(build_vault_data(db))
 }
 
-/// Move an entry to the Recycle Bin (creating it if needed), save locally and push to WebDAV.
-#[tauri::command]
-pub async fn delete_entry(
+fn parse_entry_id(uuid: &str) -> Result<keepass::db::EntryId, String> {
+    let entry_uuid = uuid::Uuid::parse_str(uuid).map_err(|e| format!("Invalid UUID: {e}"))?;
+    Ok(keepass::db::EntryId::from_uuid(entry_uuid))
+}
+
+/// Get the Recycle Bin group id, creating the group if it doesn't exist yet.
+fn get_or_create_recycle_bin(db: &mut keepass::Database) -> keepass::db::GroupId {
+    if let Some(rb) = db.recycle_bin() {
+        return rb.id();
+    }
+    let id = {
+        let mut root = db.root_mut();
+        let mut new_group = root.add_group();
+        new_group.name = "Recycle Bin".to_string();
+        new_group.id()
+    };
+    db.meta.recyclebin_uuid = Some(id.uuid());
+    db.meta.recyclebin_enabled = Some(true);
+    id
+}
+
+/// Load the cached (or freshly fetched) database, apply `mutate`, persist to the
+/// local cache immediately, push to WebDAV in the background, and return fresh
+/// vault data. Shared by the delete / restore / purge commands.
+async fn mutate_and_persist<F>(
     app: tauri::AppHandle,
     password: String,
-    uuid: String,
-) -> Result<VaultData, String> {
+    mutate: F,
+) -> Result<VaultData, String>
+where
+    F: FnOnce(&mut keepass::Database) -> Result<(), String>,
+{
     let config_str = std::fs::read_to_string(config_path(&app))
         .map_err(|_| "WebDAV not configured".to_string())?;
     let config: crate::webdav::WebDavConfig =
@@ -395,28 +420,7 @@ pub async fn delete_entry(
     )
     .map_err(|e| format!("Failed to open database: {e}"))?;
 
-    // Get or create the Recycle Bin group
-    let recycle_bin_id = if let Some(rb) = db.recycle_bin() {
-        rb.id()
-    } else {
-        let id = {
-            let mut root = db.root_mut();
-            let mut new_group = root.add_group();
-            new_group.name = "Recycle Bin".to_string();
-            new_group.id()
-        };
-        db.meta.recyclebin_uuid = Some(id.uuid());
-        db.meta.recyclebin_enabled = Some(true);
-        id
-    };
-
-    let entry_uuid = uuid::Uuid::parse_str(&uuid)
-        .map_err(|e| format!("Invalid UUID: {e}"))?;
-    let entry_id = keepass::db::EntryId::from_uuid(entry_uuid);
-    db.entry_mut(entry_id)
-        .ok_or_else(|| "Entry not found".to_string())?
-        .move_to(recycle_bin_id)
-        .map_err(|_| "Failed to move entry to Recycle Bin".to_string())?;
+    mutate(&mut db)?;
 
     let mut saved_bytes: Vec<u8> = Vec::new();
     db.save(
@@ -452,6 +456,59 @@ pub async fn delete_entry(
     }
 
     Ok(build_vault_data(db2))
+}
+
+/// Move an entry to the Recycle Bin (creating it if needed).
+#[tauri::command]
+pub async fn delete_entry(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, |db| {
+        let recycle_bin_id = get_or_create_recycle_bin(db);
+        let entry_id = parse_entry_id(&uuid)?;
+        db.entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?
+            .move_to(recycle_bin_id)
+            .map_err(|_| "Failed to move entry to Recycle Bin".to_string())
+    })
+    .await
+}
+
+/// Restore an entry from the Recycle Bin back to the root group.
+#[tauri::command]
+pub async fn restore_entry(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, |db| {
+        let root_id = db.root().id();
+        let entry_id = parse_entry_id(&uuid)?;
+        db.entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?
+            .move_to(root_id)
+            .map_err(|_| "Failed to restore entry".to_string())
+    })
+    .await
+}
+
+/// Permanently delete an entry (used for entries already in the Recycle Bin).
+#[tauri::command]
+pub async fn delete_entry_permanent(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        db.entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?
+            .remove(); // consumes EntryMut — permanent removal
+        Ok(())
+    })
+    .await
 }
 
 /// Force-fetch from WebDAV, update cache, and return fresh vault data.

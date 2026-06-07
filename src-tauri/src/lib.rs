@@ -11,6 +11,8 @@ pub fn run() {
             vault::open_database,
             vault::force_sync,
             vault::delete_entry,
+            vault::restore_entry,
+            vault::delete_entry_permanent,
             vault::save_entry,
         ])
         .run(tauri::generate_context!())
