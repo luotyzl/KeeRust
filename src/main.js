@@ -10,6 +10,17 @@ let otpTimers = [];
 let masterPassword = "";
 let editMode = false;
 
+// Which fields the search looks in (KeeWeb-style advanced search)
+let searchFields = {
+  title: true,
+  username: true,
+  password: false,
+  url: true,
+  notes: true,
+  custom: true,
+};
+let searchCaseSensitive = false;
+
 // ── Screen helpers ────────────────────────────────────────────────────────────
 function show(id) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
@@ -220,13 +231,22 @@ function filteredEntries() {
   }
 
   if (searchQuery) {
-    const q = searchQuery.toLowerCase();
-    list = list.filter(
-      (e) =>
-        e.title.toLowerCase().includes(q) ||
-        e.username.toLowerCase().includes(q) ||
-        e.url.toLowerCase().includes(q)
-    );
+    const cs = searchCaseSensitive;
+    const needle = cs ? searchQuery : searchQuery.toLowerCase();
+    const hit = (val) => {
+      if (!val) return false;
+      return (cs ? val : val.toLowerCase()).includes(needle);
+    };
+    list = list.filter((e) => {
+      if (searchFields.title && hit(e.title)) return true;
+      if (searchFields.username && hit(e.username)) return true;
+      if (searchFields.password && hit(e.password)) return true;
+      if (searchFields.url && hit(e.url)) return true;
+      if (searchFields.notes && hit(e.notes)) return true;
+      if (searchFields.custom &&
+          e.custom_fields.some((cf) => hit(cf.name) || hit(cf.value))) return true;
+      return false;
+    });
   }
   return list;
 }
@@ -1021,6 +1041,39 @@ document.getElementById("search-input").addEventListener("input", (e) => {
   renderEntries();
   renderDetail();
 });
+
+// ── Search options dropdown (choose which fields to search) ────────────────────
+const searchOptsBtn = document.getElementById("search-opts-btn");
+const searchOptsDropdown = document.getElementById("search-opts-dropdown");
+
+function setSearchOptsOpen(open) {
+  searchOptsDropdown.style.display = open ? "block" : "none";
+  searchOptsBtn.classList.toggle("active", open);
+}
+
+searchOptsBtn.addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  setSearchOptsOpen(searchOptsDropdown.style.display === "none");
+});
+
+// Re-run the filter whenever a field checkbox or the case toggle changes
+searchOptsDropdown.addEventListener("change", (ev) => {
+  const cb = ev.target;
+  if (cb.dataset.field) {
+    searchFields[cb.dataset.field] = cb.checked;
+  } else if (cb.id === "search-cs") {
+    searchCaseSensitive = cb.checked;
+  }
+  selectedEntryUuid = null;
+  renderEntries();
+  renderDetail();
+});
+
+// Keep clicks inside the dropdown from closing it
+searchOptsDropdown.addEventListener("click", (ev) => ev.stopPropagation());
+
+// Close the dropdown on any outside click
+document.addEventListener("click", () => setSearchOptsOpen(false));
 
 // ── Type-to-search (KeeWeb-style) ─────────────────────────────────────────────
 // Pressing any printable key while the vault is open jumps focus into the search

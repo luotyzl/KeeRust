@@ -110,12 +110,39 @@
         font-size: 1rem; font-weight: 700; color: #fff;
         white-space: nowrap; margin-right: 0.5rem;
       }
-      .vault-search-wrap { flex: 1; }
+      .vault-search-wrap { flex: 1; position: relative; }
       .vault-search-wrap input {
         background: #1e2433; border: 1px solid #2d3748;
-        border-radius: 6px; padding: 0.4rem 0.8rem;
+        border-radius: 6px; padding: 0.4rem 2.1rem 0.4rem 0.8rem;
         color: #e2e8f0; font-size: 0.875rem; width: 100%;
       }
+      .search-opts-btn {
+        position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+        width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+        background: none; border: none; border-radius: 5px;
+        color: #64748b; cursor: pointer; transition: color 0.15s, background 0.15s;
+      }
+      .search-opts-btn:hover { color: #4a90e2; background: #2d374830; }
+      .search-opts-btn.active { color: #4a90e2; }
+      .search-opts-dropdown {
+        position: absolute; top: calc(100% + 6px); right: 0; z-index: 300;
+        background: #1a1f2e; border: 1px solid #2d3748;
+        border-radius: 8px; padding: 0.5rem; min-width: 190px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      }
+      .search-opts-title {
+        font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.06em; color: #4a5568; padding: 0.25rem 0.4rem 0.4rem;
+      }
+      .search-opts-dropdown label {
+        display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.35rem 0.4rem; border-radius: 5px; cursor: pointer;
+        font-size: 0.82rem; color: #cbd5e1; text-transform: none;
+        letter-spacing: normal; font-weight: 400; margin: 0;
+      }
+      .search-opts-dropdown label:hover { background: #1e2433; }
+      .search-opts-dropdown input[type="checkbox"] { cursor: pointer; accent-color: #4a90e2; }
+      .search-opts-divider { height: 1px; background: #2d3748; margin: 0.4rem 0.2rem; }
       .btn-lock {
         padding: 0.35rem 0.9rem; background: none;
         border: 1px solid #2d3748; border-radius: 6px;
@@ -617,6 +644,22 @@
         <span class="vault-brand">KeeRust</span>
         <div class="vault-search-wrap">
           <input type="search" id="search-input" placeholder="Search entries…" autocomplete="off" />
+          <button class="search-opts-btn" id="search-opts-btn" title="Search options" aria-label="Search options">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+          </button>
+          <div class="search-opts-dropdown" id="search-opts-dropdown" style="display:none">
+            <div class="search-opts-title">Search in</div>
+            <label><input type="checkbox" data-field="title" checked /> Title</label>
+            <label><input type="checkbox" data-field="username" checked /> Username</label>
+            <label><input type="checkbox" data-field="password" /> Password</label>
+            <label><input type="checkbox" data-field="url" checked /> URL</label>
+            <label><input type="checkbox" data-field="notes" checked /> Notes</label>
+            <label><input type="checkbox" data-field="custom" checked /> Custom Fields</label>
+            <div class="search-opts-divider"></div>
+            <label><input type="checkbox" id="search-cs" /> Case sensitive</label>
+          </div>
         </div>
         <span class="sync-dot" id="sync-dot" title="Sync status"></span>
         <button class="btn-lock" id="btn-add-entry">+ New</button>
