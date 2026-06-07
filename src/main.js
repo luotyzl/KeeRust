@@ -170,6 +170,7 @@ function renderGroups() {
   el.appendChild(section);
 
   for (const g of vaultData.groups) {
+    if (g.uuid === vaultData.recycle_bin_uuid) continue; // shown in footer instead
     const item = document.createElement("div");
     item.className = "group-item" + (g.uuid === selectedGroupUuid ? " active" : "");
     item.innerHTML = `
@@ -185,14 +186,39 @@ function renderGroups() {
     });
     el.appendChild(item);
   }
+
+  renderRecycleBin();
+}
+
+// ── Render: recycle bin footer item ───────────────────────────────────────────
+function renderRecycleBin() {
+  const wrap = document.getElementById("sidebar-recycle");
+  const rbUuid = vaultData?.recycle_bin_uuid;
+  if (!rbUuid) { wrap.style.display = "none"; return; }
+
+  const rbGroup = vaultData.groups.find((g) => g.uuid === rbUuid);
+  wrap.style.display = "block";
+  document.getElementById("recycle-count").textContent = rbGroup ? rbGroup.entry_count : 0;
+  document.getElementById("recycle-bin-item")
+    .classList.toggle("active", selectedGroupUuid === rbUuid);
 }
 
 // ── Render: entry list ────────────────────────────────────────────────────────
 function filteredEntries() {
   let list = vaultData.entries;
-  if (selectedGroupUuid && selectedGroupUuid !== vaultData.groups[0]?.uuid) {
+  const rbUuid = vaultData.recycle_bin_uuid;
+  const rootUuid = vaultData.groups[0]?.uuid;
+
+  if (rbUuid && selectedGroupUuid === rbUuid) {
+    // Recycle Bin view: only recycled entries
+    list = list.filter((e) => e.group_uuid === rbUuid);
+  } else if (selectedGroupUuid && selectedGroupUuid !== rootUuid) {
     list = list.filter((e) => e.group_uuid === selectedGroupUuid);
+  } else if (rbUuid) {
+    // "All Entries" view: hide anything in the Recycle Bin
+    list = list.filter((e) => e.group_uuid !== rbUuid);
   }
+
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
     list = list.filter(
@@ -331,6 +357,9 @@ function renderDetail() {
       <div class="detail-group-tag">📁 ${escHtml(e.group_name)}</div>
     </div>`;
 
+  // Delete action
+  html += `<div class="detail-actions-row"><button class="btn-danger" id="btn-delete-entry">Delete</button></div>`;
+
   // History
   if (e.history.length > 0) {
     html += `
@@ -441,6 +470,9 @@ function renderDetail() {
 
   // Edit button
   el.querySelector("#btn-edit-entry")?.addEventListener("click", () => renderEditForm(e));
+
+  // Delete button
+  el.querySelector("#btn-delete-entry")?.addEventListener("click", () => showDeleteModal(e));
 }
 
 // ── Edit form ─────────────────────────────────────────────────────────────────
@@ -718,12 +750,70 @@ function escAttr(s) {
   return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// ── Delete modal ──────────────────────────────────────────────────────────────
+let pendingDeleteEntry = null;
+
+function showDeleteModal(entry) {
+  pendingDeleteEntry = entry;
+  document.getElementById("modal-entry-name").textContent = entry.title || "(no title)";
+  document.getElementById("delete-modal").classList.remove("hidden");
+  document.getElementById("modal-confirm").disabled = false;
+  document.getElementById("modal-confirm").textContent = "Move to Recycle Bin";
+}
+
+function hideDeleteModal() {
+  pendingDeleteEntry = null;
+  document.getElementById("delete-modal").classList.add("hidden");
+}
+
+document.getElementById("modal-cancel").addEventListener("click", hideDeleteModal);
+
+document.getElementById("delete-modal").addEventListener("click", (ev) => {
+  if (ev.target === ev.currentTarget) hideDeleteModal(); // click outside box
+});
+
+document.getElementById("modal-confirm").addEventListener("click", async () => {
+  if (!pendingDeleteEntry) return;
+  const btn = document.getElementById("modal-confirm");
+  btn.disabled = true;
+  btn.textContent = "Moving…";
+
+  try {
+    vaultData = await invoke("delete_entry", {
+      password: masterPassword,
+      uuid: pendingDeleteEntry.uuid,
+    });
+    hideDeleteModal();
+    selectedEntryUuid = null;
+    renderGroups();
+    renderEntries();
+    renderDetail();
+    setSyncDot("syncing");
+    showToast("Moved to Recycle Bin");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Move to Recycle Bin";
+    showToast("Failed: " + String(err));
+  }
+});
+
 // ── DB name footer ────────────────────────────────────────────────────────────
 function updateDbName() {
   const name = vaultData?.groups[0]?.name || "—";
   const el = document.getElementById("db-name");
   if (el) { el.textContent = name; el.title = name; }
 }
+
+// ── Recycle Bin selection ─────────────────────────────────────────────────────
+document.getElementById("recycle-bin-item").addEventListener("click", () => {
+  const rbUuid = vaultData?.recycle_bin_uuid;
+  if (!rbUuid) return;
+  selectedGroupUuid = rbUuid;
+  selectedEntryUuid = null;
+  renderGroups();
+  renderEntries();
+  renderDetail();
+});
 
 document.getElementById("btn-sync-now").addEventListener("click", async () => {
   if (!masterPassword) return;
