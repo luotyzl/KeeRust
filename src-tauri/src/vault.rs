@@ -5,7 +5,7 @@ use std::io::Cursor;
 use tauri::{Emitter, Manager};
 
 use crate::attachments::mime_type;
-use crate::webdav::{config_path, fetch_db_bytes, put_db_bytes};
+use crate::source::{load_source, VaultSource};
 
 // ── Outbound data structures ──────────────────────────────────────────────────
 
@@ -100,6 +100,75 @@ fn cache_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .app_data_dir()
         .expect("failed to resolve app data dir")
         .join("db_cache.kdbx")
+}
+
+// ── Open / persist helpers ──────────────────────────────────────────────────────
+
+/// Decrypt KDBX bytes with the master password.
+fn open_db(bytes: &[u8], password: &str) -> Result<keepass::Database, String> {
+    let mut cursor = Cursor::new(bytes);
+    keepass::Database::open(
+        &mut cursor,
+        keepass::DatabaseKey::new().with_password(password),
+    )
+    .map_err(|e| format!("Failed to open database: {e}"))
+}
+
+/// Read the database bytes to work from. WebDAV is cache-first (use the local
+/// cache when present, otherwise fetch and store it); local files are always
+/// read directly so external edits are picked up.
+async fn read_working_bytes(
+    app: &tauri::AppHandle,
+    source: &VaultSource,
+) -> Result<Vec<u8>, String> {
+    if source.is_local() {
+        return source.fetch().await;
+    }
+    let cache = cache_path(app);
+    if cache.exists() {
+        std::fs::read(&cache).map_err(|e| format!("Cache read failed: {e}"))
+    } else {
+        let b = source.fetch().await?;
+        if let Some(p) = cache.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let _ = std::fs::write(&cache, &b);
+        Ok(b)
+    }
+}
+
+/// Persist freshly-saved KDBX bytes back to the source.
+/// - Local: write the file synchronously; an error means the change did not save.
+/// - WebDAV: write the local cache immediately, then PUT in the background and
+///   report the outcome through the `sync-status` event.
+async fn persist_bytes(
+    app: &tauri::AppHandle,
+    source: &VaultSource,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    if source.is_local() {
+        return source.put(bytes).await;
+    }
+    let cache = cache_path(app);
+    if let Some(p) = cache.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let _ = std::fs::write(&cache, &bytes);
+
+    let app2 = app.clone();
+    let source2 = source.clone();
+    tauri::async_runtime::spawn(async move {
+        match source2.put(bytes).await {
+            Ok(_) => {
+                app2.emit("sync-status", serde_json::json!({"ok": true})).ok();
+            }
+            Err(e) => {
+                app2.emit("sync-status", serde_json::json!({"ok": false, "error": e}))
+                    .ok();
+            }
+        }
+    });
+    Ok(())
 }
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
@@ -342,15 +411,19 @@ pub async fn open_database(
     app: tauri::AppHandle,
     password: String,
 ) -> Result<VaultData, String> {
-    let config_str = std::fs::read_to_string(config_path(&app))
-        .map_err(|_| "WebDAV not configured".to_string())?;
-    let config: crate::webdav::WebDavConfig =
-        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+    let source = load_source(&app)?;
 
+    // Local files: read directly, no cache and no background sync.
+    if source.is_local() {
+        let bytes = source.fetch().await?;
+        let db = open_db(&bytes, &password)?;
+        return Ok(build_vault_data(db));
+    }
+
+    // WebDAV: cache-first — serve from disk immediately, check remote in background.
     let cache = cache_path(&app);
     let mut used_cache = false;
 
-    // Cache-first: serve from disk immediately, sync in background
     let bytes = if cache.exists() {
         match std::fs::read(&cache) {
             Ok(b) => {
@@ -359,7 +432,7 @@ pub async fn open_database(
             }
             Err(_) => {
                 // Cache unreadable — fall back to WebDAV
-                let b = fetch_db_bytes(&config).await?;
+                let b = source.fetch().await?;
                 if let Some(p) = cache.parent() {
                     let _ = std::fs::create_dir_all(p);
                 }
@@ -369,7 +442,7 @@ pub async fn open_database(
         }
     } else {
         // First open: fetch from WebDAV and store locally
-        let b = fetch_db_bytes(&config).await?;
+        let b = source.fetch().await?;
         if let Some(p) = cache.parent() {
             let _ = std::fs::create_dir_all(p);
         }
@@ -377,20 +450,15 @@ pub async fn open_database(
         b
     };
 
-    let mut cursor = Cursor::new(bytes);
-    let db = keepass::Database::open(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to open database: {e}"))?;
+    let db = open_db(&bytes, &password)?;
 
     // Background: check if remote has a newer version than what we just served
     if used_cache {
         let app2 = app.clone();
-        let config2 = config.clone();
+        let source2 = source.clone();
         let cache2 = cache.clone();
         tauri::async_runtime::spawn(async move {
-            if let Ok(remote_bytes) = fetch_db_bytes(&config2).await {
+            if let Ok(remote_bytes) = source2.fetch().await {
                 let cached = std::fs::read(&cache2).unwrap_or_default();
                 if remote_bytes != cached {
                     let _ = std::fs::write(&cache2, &remote_bytes);
@@ -435,28 +503,10 @@ async fn mutate_and_persist<F>(
 where
     F: FnOnce(&mut keepass::Database) -> Result<(), String>,
 {
-    let config_str = std::fs::read_to_string(config_path(&app))
-        .map_err(|_| "WebDAV not configured".to_string())?;
-    let config: crate::webdav::WebDavConfig =
-        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+    let source = load_source(&app)?;
 
-    let cache = cache_path(&app);
-    let bytes = if cache.exists() {
-        std::fs::read(&cache).map_err(|e| format!("Cache read failed: {e}"))?
-    } else {
-        let b = fetch_db_bytes(&config).await?;
-        if let Some(p) = cache.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        b
-    };
-
-    let mut cursor = Cursor::new(bytes);
-    let mut db = keepass::Database::open(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to open database: {e}"))?;
+    let bytes = read_working_bytes(&app, &source).await?;
+    let mut db = open_db(&bytes, &password)?;
 
     mutate(&mut db)?;
 
@@ -467,31 +517,8 @@ where
     )
     .map_err(|e| format!("Failed to save: {e}"))?;
 
-    let _ = std::fs::write(&cache, &saved_bytes);
-
-    let db2 = {
-        let mut c = Cursor::new(saved_bytes.clone());
-        keepass::Database::open(
-            &mut c,
-            keepass::DatabaseKey::new().with_password(&password),
-        )
-        .map_err(|e| format!("Failed to reload: {e}"))?
-    };
-
-    {
-        let app2 = app.clone();
-        let config2 = config;
-        tauri::async_runtime::spawn(async move {
-            match put_db_bytes(&config2, saved_bytes).await {
-                Ok(_) => {
-                    app2.emit("sync-status", serde_json::json!({"ok": true})).ok();
-                }
-                Err(e) => {
-                    app2.emit("sync-status", serde_json::json!({"ok": false, "error": e})).ok();
-                }
-            }
-        });
-    }
+    let db2 = open_db(&saved_bytes, &password)?;
+    persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(build_vault_data(db2))
 }
@@ -556,26 +583,21 @@ pub async fn force_sync(
     app: tauri::AppHandle,
     password: String,
 ) -> Result<VaultData, String> {
-    let config_str = std::fs::read_to_string(config_path(&app))
-        .map_err(|_| "WebDAV not configured".to_string())?;
-    let config: crate::webdav::WebDavConfig =
-        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+    let source = load_source(&app)?;
 
-    let remote_bytes = fetch_db_bytes(&config).await?;
+    // Re-read from the origin: a WebDAV GET, or the local file (for external edits).
+    let bytes = source.fetch().await?;
 
-    let cache = cache_path(&app);
-    if let Some(p) = cache.parent() {
-        let _ = std::fs::create_dir_all(p);
+    // Refresh the cache for WebDAV; local files have no cache.
+    if !source.is_local() {
+        let cache = cache_path(&app);
+        if let Some(p) = cache.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let _ = std::fs::write(&cache, &bytes);
     }
-    let _ = std::fs::write(&cache, &remote_bytes);
 
-    let mut cursor = Cursor::new(remote_bytes);
-    let db = keepass::Database::open(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to open database: {e}"))?;
-
+    let db = open_db(&bytes, &password)?;
     Ok(build_vault_data(db))
 }
 
@@ -585,31 +607,10 @@ pub async fn save_entry(
     password: String,
     entry: EntryUpdate,
 ) -> Result<SaveResult, String> {
-    let config_str = std::fs::read_to_string(config_path(&app))
-        .map_err(|_| "WebDAV not configured".to_string())?;
-    let config: crate::webdav::WebDavConfig =
-        serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+    let source = load_source(&app)?;
 
-    let cache = cache_path(&app);
-
-    // Load from local cache (no network round-trip on save)
-    let bytes = if cache.exists() {
-        std::fs::read(&cache).map_err(|e| format!("Cache read failed: {e}"))?
-    } else {
-        // No cache yet — fetch from WebDAV
-        let b = fetch_db_bytes(&config).await?;
-        if let Some(p) = cache.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        b
-    };
-
-    let mut cursor = Cursor::new(bytes);
-    let mut db = keepass::Database::open(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to open database: {e}"))?;
+    let bytes = read_working_bytes(&app, &source).await?;
+    let mut db = open_db(&bytes, &password)?;
 
     let saved_uuid = if entry.uuid.is_empty() {
         // New entry: add to the specified group
@@ -648,39 +649,16 @@ pub async fn save_entry(
     )
     .map_err(|e| format!("Failed to save: {e}"))?;
 
-    // Write to local cache immediately — user gets instant feedback
-    let _ = std::fs::write(&cache, &saved_bytes);
-
     // Re-parse from saved bytes to build the response
-    let db2 = {
-        let mut c = Cursor::new(saved_bytes.clone());
-        keepass::Database::open(
-            &mut c,
-            keepass::DatabaseKey::new().with_password(&password),
-        )
-        .map_err(|e| format!("Failed to reload: {e}"))?
-    };
+    let db2 = open_db(&saved_bytes, &password)?;
 
     let result = SaveResult {
         vault: build_vault_data(db2),
         saved_uuid,
     };
 
-    // Background: PUT to WebDAV (non-blocking)
-    {
-        let app2 = app.clone();
-        let config2 = config;
-        tauri::async_runtime::spawn(async move {
-            match put_db_bytes(&config2, saved_bytes).await {
-                Ok(_) => {
-                    app2.emit("sync-status", serde_json::json!({"ok": true})).ok();
-                }
-                Err(e) => {
-                    app2.emit("sync-status", serde_json::json!({"ok": false, "error": e})).ok();
-                }
-            }
-        });
-    }
+    // Persist: local writes synchronously, WebDAV caches + PUTs in the background.
+    persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(result)
 }
