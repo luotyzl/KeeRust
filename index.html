@@ -385,7 +385,11 @@
         color: #94a3b8; font-size: 0.75rem; cursor: pointer;
         transition: background 0.15s, color 0.15s;
       }
-      .icon-btn:hover { background: #374151; color: #e2e8f0; }
+      .icon-btn:hover:not(:disabled) { background: #374151; color: #e2e8f0; }
+      .icon-btn:disabled,
+      .btn-danger:disabled,
+      .btn-restore:disabled,
+      .btn-modal-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
       .detail-notes {
         background: #1e2433; border: 1px solid #2d3748;
         border-radius: 8px; padding: 0.65rem 0.75rem;
@@ -562,12 +566,14 @@
         font-size: 0.875rem; cursor: pointer; transition: border-color 0.15s, color 0.15s;
       }
       .btn-cancel-entry:hover { border-color: #4a5568; color: #e2e8f0; }
-      .detail-edit-btn { margin-left: auto; }
-
-      /* Delete button in detail panel */
-      .detail-actions-row {
-        padding: 0.75rem 1.25rem 1rem;
-        display: flex; gap: 0.5rem; justify-content: flex-end;
+      /* Edit / Delete / Recover action group in the detail title row */
+      .detail-title-actions {
+        margin-left: auto; flex-shrink: 0;
+        display: flex; align-items: center; gap: 0.5rem;
+      }
+      .detail-title-actions .btn-danger,
+      .detail-title-actions .btn-restore {
+        padding: 0.25rem 0.55rem; font-size: 0.75rem;
       }
       .btn-danger {
         padding: 0.35rem 0.9rem; background: none;
@@ -575,14 +581,14 @@
         color: #fca5a5; font-size: 0.8rem; cursor: pointer;
         transition: background 0.15s, border-color 0.15s;
       }
-      .btn-danger:hover { background: #7f1d1d30; border-color: #991b1b; }
+      .btn-danger:hover:not(:disabled) { background: #7f1d1d30; border-color: #991b1b; }
       .btn-restore {
         padding: 0.35rem 0.9rem; background: none;
         border: 1px solid #166534; border-radius: 6px;
         color: #86efac; font-size: 0.8rem; cursor: pointer;
         transition: background 0.15s, border-color 0.15s;
       }
-      .btn-restore:hover { background: #16653430; border-color: #15803d; }
+      .btn-restore:hover:not(:disabled) { background: #16653430; border-color: #15803d; }
 
       /* Confirmation modal */
       .modal-overlay {

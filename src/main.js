@@ -331,11 +331,20 @@ function renderDetail() {
   const color = avatarColor(e.title);
   const detailBg = e.custom_icon_base64 ? "transparent" : color;
 
+  const inRecycleBin = vaultData.recycle_bin_uuid && e.group_uuid === vaultData.recycle_bin_uuid;
+  const actionsHtml = inRecycleBin
+    ? `<button class="btn-restore" id="btn-restore-entry">Recover</button>
+       <button class="btn-danger" id="btn-delete-entry">Delete Forever</button>`
+    : `<button class="btn-danger" id="btn-delete-entry">Delete</button>`;
+
   let html = `
     <div class="detail-title">
       <div class="detail-avatar" style="background:${detailBg}">${avatarInner(e)}</div>
       <span style="flex:1">${escHtml(e.title || "(no title)")}</span>
-      <button class="icon-btn detail-edit-btn" id="btn-edit-entry">Edit</button>
+      <div class="detail-title-actions">
+        <button class="icon-btn detail-edit-btn" id="btn-edit-entry">Edit</button>
+        ${actionsHtml}
+      </div>
     </div>
     ${detailField("Username", e.username, true, false)}
     ${detailField("Password", e.password, true, true)}
@@ -400,19 +409,6 @@ function renderDetail() {
       <div class="detail-label">Group</div>
       <div class="detail-group-tag">📁 ${escHtml(e.group_name)}</div>
     </div>`;
-
-  // Delete / restore actions
-  const inRecycleBin = vaultData.recycle_bin_uuid && e.group_uuid === vaultData.recycle_bin_uuid;
-  if (inRecycleBin) {
-    html += `<div class="detail-actions-row">
-      <button class="btn-restore" id="btn-restore-entry">Recover</button>
-      <button class="btn-danger" id="btn-delete-entry">Delete Forever</button>
-    </div>`;
-  } else {
-    html += `<div class="detail-actions-row">
-      <button class="btn-danger" id="btn-delete-entry">Delete</button>
-    </div>`;
-  }
 
   // History
   if (e.history.length > 0) {
@@ -881,6 +877,7 @@ function escAttr(s) {
 // ── Delete modal ──────────────────────────────────────────────────────────────
 let pendingDeleteEntry = null;
 let pendingDeletePermanent = false;
+let deleteInProgress = false;
 
 function showDeleteModal(entry, permanent) {
   pendingDeleteEntry = entry;
@@ -904,10 +901,12 @@ function showDeleteModal(entry, permanent) {
   }
 
   confirm.disabled = false;
+  document.getElementById("modal-cancel").disabled = false;
   document.getElementById("delete-modal").classList.remove("hidden");
 }
 
 function hideDeleteModal() {
+  if (deleteInProgress) return; // don't allow closing mid-operation
   pendingDeleteEntry = null;
   document.getElementById("delete-modal").classList.add("hidden");
 }
@@ -919,11 +918,14 @@ document.getElementById("delete-modal").addEventListener("click", (ev) => {
 });
 
 document.getElementById("modal-confirm").addEventListener("click", async () => {
-  if (!pendingDeleteEntry) return;
+  if (!pendingDeleteEntry || deleteInProgress) return;
   const permanent = pendingDeletePermanent;
   const btn = document.getElementById("modal-confirm");
+  const cancelBtn = document.getElementById("modal-cancel");
   const restoreLabel = permanent ? "Delete Forever" : "Move to Recycle Bin";
+  deleteInProgress = true;
   btn.disabled = true;
+  cancelBtn.disabled = true;
   btn.textContent = permanent ? "Deleting…" : "Moving…";
 
   try {
@@ -931,6 +933,7 @@ document.getElementById("modal-confirm").addEventListener("click", async () => {
       password: masterPassword,
       uuid: pendingDeleteEntry.uuid,
     });
+    deleteInProgress = false;
     hideDeleteModal();
     selectedEntryUuid = null;
     renderGroups();
@@ -939,7 +942,9 @@ document.getElementById("modal-confirm").addEventListener("click", async () => {
     setSyncDot("syncing");
     showToast(permanent ? "Deleted permanently" : "Moved to Recycle Bin");
   } catch (err) {
+    deleteInProgress = false;
     btn.disabled = false;
+    cancelBtn.disabled = false;
     btn.textContent = restoreLabel;
     showToast("Failed: " + String(err));
   }
@@ -947,6 +952,15 @@ document.getElementById("modal-confirm").addEventListener("click", async () => {
 
 // ── Restore from Recycle Bin ──────────────────────────────────────────────────
 async function restoreEntry(entry) {
+  const restoreBtn = document.getElementById("btn-restore-entry");
+  const actionBtns = [
+    restoreBtn,
+    document.getElementById("btn-delete-entry"),
+    document.getElementById("btn-edit-entry"),
+  ];
+  actionBtns.forEach((b) => { if (b) b.disabled = true; });
+  if (restoreBtn) restoreBtn.textContent = "Recovering…";
+
   try {
     vaultData = await invoke("restore_entry", {
       password: masterPassword,
@@ -959,6 +973,8 @@ async function restoreEntry(entry) {
     setSyncDot("syncing");
     showToast("Entry recovered");
   } catch (err) {
+    actionBtns.forEach((b) => { if (b) b.disabled = false; });
+    if (restoreBtn) restoreBtn.textContent = "Recover";
     showToast("Recover failed: " + String(err));
   }
 }
