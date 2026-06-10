@@ -66,6 +66,22 @@
       .btn:hover:not(:disabled) { background: #357abd; }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+      .btn-secondary {
+        margin-top: 0; background: #1e2433; border: 1px solid #2d3748; color: #e2e8f0;
+      }
+      .btn-secondary:hover:not(:disabled) { background: #252c3d; border-color: #3a455a; }
+
+      .or-divider {
+        display: flex; align-items: center; text-align: center;
+        color: #4a5568; font-size: 0.75rem; text-transform: uppercase;
+        letter-spacing: 0.05em; margin: 1.5rem 0;
+      }
+      .or-divider::before, .or-divider::after {
+        content: ""; flex: 1; height: 1px; background: #2d3748;
+      }
+      .or-divider::before { margin-right: 0.75rem; }
+      .or-divider::after { margin-left: 0.75rem; }
+
       .link-btn {
         display: block; width: 100%; margin-top: 1rem;
         background: none; border: none; color: #4a90e2;
@@ -644,9 +660,11 @@
       <div class="auth-box">
         <div class="logo">
           <h1>KeeRust</h1>
-          <p>KeePass via WebDAV</p>
+          <p>KeePass for desktop</p>
         </div>
-        <h2>WebDAV Setup</h2>
+        <h2>Open Database</h2>
+        <button type="button" id="btn-pick-local" class="btn btn-secondary">📂 Open Local File…</button>
+        <div class="or-divider">or via WebDAV</div>
         <form id="form-config" novalidate>
           <div class="form-group">
             <label for="dav-url">WebDAV URL</label>
@@ -684,7 +702,7 @@
           <div id="unlock-error" class="error"></div>
           <button type="submit" class="btn" id="btn-unlock">Unlock</button>
         </form>
-        <button id="btn-change-config" class="link-btn">Change WebDAV settings</button>
+        <button id="btn-change-config" class="link-btn">Change database</button>
       </div>
     </div>
 

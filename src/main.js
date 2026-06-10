@@ -9,6 +9,7 @@ let searchQuery = "";
 let otpTimers = [];
 let masterPassword = "";
 let editMode = false;
+let vaultIsLocal = false; // true when the open database is a local file (no WebDAV sync)
 
 // Which fields the search looks in (KeeWeb-style advanced search)
 let searchFields = {
@@ -31,6 +32,29 @@ function setError(id, msg) {
   const el = document.getElementById(id);
   el.textContent = msg;
   el.classList.toggle("visible", !!msg);
+}
+
+// Reflect the active vault source (local file vs WebDAV) in state and the UI.
+function applySource(source) {
+  if (!source) return;
+  vaultIsLocal = source.type === "local";
+  const label = vaultIsLocal ? source.path : source.url;
+  document.getElementById("vault-source").textContent = label;
+  // Sync controls only make sense for WebDAV; for local files the button just reloads.
+  const syncBtn = document.getElementById("btn-sync-now");
+  if (syncBtn) syncBtn.title = vaultIsLocal ? "Reload from file" : "Sync from cloud";
+}
+
+// After a local mutation the write is already on disk, so there's no background
+// sync to wait on — flash the dot green. For WebDAV, show the pending state.
+function markSyncPending() {
+  if (vaultIsLocal) {
+    setSyncDot("ok");
+    clearTimeout(syncDotTimer);
+    syncDotTimer = setTimeout(() => setSyncDot(""), 2000);
+  } else {
+    setSyncDot("syncing");
+  }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -749,8 +773,8 @@ function renderEditForm(entry) {
       renderEntries();
       renderDetail();
       showToast(isNew ? "Entry added" : "Entry saved");
-      // Cache write done; background PUT is in progress
-      setSyncDot("syncing");
+      // Saved to disk; WebDAV PUT (if any) runs in the background
+      markSyncPending();
     } catch (err) {
       showToast("Save failed: " + String(err));
       saveBtn.disabled = false;
@@ -939,7 +963,7 @@ document.getElementById("modal-confirm").addEventListener("click", async () => {
     renderGroups();
     renderEntries();
     renderDetail();
-    setSyncDot("syncing");
+    markSyncPending();
     showToast(permanent ? "Deleted permanently" : "Moved to Recycle Bin");
   } catch (err) {
     deleteInProgress = false;
@@ -970,7 +994,7 @@ async function restoreEntry(entry) {
     renderGroups();
     renderEntries();
     renderDetail();
-    setSyncDot("syncing");
+    markSyncPending();
     showToast("Entry recovered");
   } catch (err) {
     actionBtns.forEach((b) => { if (b) b.disabled = false; });
@@ -1014,7 +1038,7 @@ document.getElementById("btn-sync-now").addEventListener("click", async () => {
     setSyncDot("ok");
     clearTimeout(syncDotTimer);
     syncDotTimer = setTimeout(() => setSyncDot(""), 4000);
-    showToast("Synced from cloud");
+    showToast(vaultIsLocal ? "Reloaded from file" : "Synced from cloud");
   } catch (err) {
     setSyncDot("error");
     clearTimeout(syncDotTimer);
@@ -1063,16 +1087,34 @@ async function init() {
     document.getElementById("sync-banner").classList.remove("visible");
   });
 
-  const config = await invoke("get_webdav_config");
-  if (config) {
-    document.getElementById("vault-source").textContent = config.url;
+  const source = await invoke("get_vault_source");
+  if (source) {
+    applySource(source);
     show("screen-unlock");
     document.getElementById("master-pass").focus();
   } else {
     show("screen-config");
-    document.getElementById("dav-url").focus();
+    document.getElementById("btn-pick-local").focus();
   }
 }
+
+// ── Open a local database file ─────────────────────────────────────────────────
+document.getElementById("btn-pick-local").addEventListener("click", async () => {
+  setError("config-error", "");
+  const btn = document.getElementById("btn-pick-local");
+  btn.disabled = true;
+  try {
+    const source = await invoke("open_local_file");
+    if (!source) return; // user cancelled the dialog
+    applySource(source);
+    show("screen-unlock");
+    document.getElementById("master-pass").focus();
+  } catch (err) {
+    setError("config-error", String(err));
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ── Config form ───────────────────────────────────────────────────────────────
 document.getElementById("form-config").addEventListener("submit", async (e) => {
@@ -1099,7 +1141,7 @@ document.getElementById("form-config").addEventListener("submit", async (e) => {
   btn.textContent = "Saving…";
   try {
     await invoke("save_webdav_config", { config });
-    document.getElementById("vault-source").textContent = config.url;
+    applySource({ type: "webdav", url: config.url });
     show("screen-unlock");
     document.getElementById("master-pass").focus();
   } catch (err) {
@@ -1245,7 +1287,7 @@ document.getElementById("btn-add-entry").addEventListener("click", () => {
 // ── Change config ─────────────────────────────────────────────────────────────
 document.getElementById("btn-change-config").addEventListener("click", () => {
   show("screen-config");
-  document.getElementById("dav-url").focus();
+  document.getElementById("btn-pick-local").focus();
 });
 
 init();
