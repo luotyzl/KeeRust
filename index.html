@@ -643,6 +643,25 @@
       .btn-modal-confirm:hover { background: #991b1b; }
       .btn-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
+      /* Metadata / XML inspector */
+      .detail-meta-row { margin-top: 1.5rem; display: flex; justify-content: center; }
+      .btn-meta {
+        padding: 0.4rem 0.9rem; background: none;
+        border: 1px solid #2d3748; border-radius: 6px;
+        color: #64748b; font-size: 0.78rem; cursor: pointer;
+        transition: background 0.15s, border-color 0.15s, color 0.15s;
+      }
+      .btn-meta:hover { background: #1e2433; border-color: #4a5568; color: #94a3b8; }
+      .modal-box.modal-xml { width: 640px; }
+      .modal-xml pre {
+        margin: 0 0 1.25rem; padding: 0.75rem 0.9rem;
+        background: #0f131c; border: 1px solid #2d3748; border-radius: 8px;
+        max-height: 60vh; overflow: auto;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        font-size: 0.75rem; line-height: 1.5; color: #cbd5e1;
+        white-space: pre; tab-size: 2;
+      }
+
       .copied-toast {
         position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
         background: #1e3a5f; color: #93c5fd; border: 1px solid #2563eb;
@@ -778,6 +797,18 @@
         <div class="modal-actions">
           <button class="btn-modal-cancel" id="modal-cancel">Cancel</button>
           <button class="btn-modal-confirm" id="modal-confirm">Move to Recycle Bin</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Entry XML / metadata inspector -->
+    <div class="modal-overlay hidden" id="xml-modal">
+      <div class="modal-box modal-xml">
+        <div class="modal-title">Entry XML</div>
+        <pre id="xml-content"></pre>
+        <div class="modal-actions">
+          <button class="btn-modal-cancel" id="xml-copy">Copy</button>
+          <button class="btn-modal-cancel" id="xml-close">Close</button>
         </div>
       </div>
     </div>
