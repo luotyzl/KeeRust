@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let vaultData = null;
@@ -1084,8 +1085,205 @@ document.getElementById("btn-sync-now").addEventListener("click", async () => {
   }
 });
 
+// ── Auto-type (global hotkey Alt+Shift+T) ──────────────────────────────────────
+// Matching mirrors KeeWeb's SelectEntryFilter: rank entries by URL (domain /
+// subdomain / path / scheme) and by window-title string match, dropping zero-rank.
+let pendingAutotype = null;
+
+const urlPartsRegex = /^(\w+:\/\/)?(?:(?:www|wwws|secure)\.)?([^\/]+)\/?(.*)/;
+const urlInTitleRegex =
+  /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,4}\b([-a-zA-Z0-9@:%_\+.~#?&\/=]*)/;
+
+function getStringRank(s1, s2) {
+  if (!s1 || !s2) return 0;
+  let ix = s1.indexOf(s2);
+  if (ix === 0 && s1.length === s2.length) return 10;
+  if (ix === 0) return 5;
+  if (ix > 0) return 3;
+  ix = s2.indexOf(s1);
+  if (ix === 0) return 5;
+  if (ix > 0) return 3;
+  return 0;
+}
+
+function entryAllUrls(e) {
+  const urls = e.url ? [e.url] : [];
+  for (const f of e.custom_fields || []) {
+    if (/url/i.test(f.name) && f.value) urls.push(f.value);
+  }
+  return urls;
+}
+
+// Port of KeeWeb SelectEntryFilter._getEntryRank
+function getEntryRank(e, windowInfo) {
+  const useTitle = !!windowInfo.title && !windowInfo.url;
+  const useUrl = !!windowInfo.url;
+  let titleRank = 0;
+  let urlRank = 0;
+
+  if (useTitle && windowInfo.title && e.title) {
+    titleRank = getStringRank(e.title.toLowerCase(), windowInfo.title.toLowerCase());
+    if (!titleRank) return 0;
+  }
+
+  if (useUrl && windowInfo.url) {
+    const searchUrlLower = windowInfo.url.toLowerCase();
+    const searchParts = urlPartsRegex.exec(searchUrlLower);
+    if (searchParts) {
+      const [, searchScheme, searchDomain, searchPath] = searchParts;
+      for (const url of entryAllUrls(e)) {
+        const parts = urlPartsRegex.exec(url.toLowerCase());
+        if (!parts) continue;
+        const [, scheme, domain, path] = parts;
+        if (domain === searchDomain || searchDomain.indexOf("." + domain) > 0) {
+          urlRank += domain === searchDomain ? 20 : 10;
+          if (path === searchPath) urlRank += 10;
+          else if (path && searchPath) {
+            if (path.lastIndexOf(searchPath, 0) === 0) urlRank += 5;
+            else if (searchPath.lastIndexOf(path, 0) === 0) urlRank += 3;
+          }
+          if (scheme === searchScheme) urlRank += 1;
+        }
+      }
+    }
+  }
+
+  if (useTitle && !titleRank) return 0;
+  if (useUrl && !urlRank) return 0;
+  return titleRank + urlRank;
+}
+
+function rankEntries(windowInfo) {
+  if (!vaultData) return [];
+  const rbUuid = vaultData.recycle_bin_uuid;
+  return vaultData.entries
+    .filter((e) => e.group_uuid !== rbUuid) // never auto-type from the recycle bin
+    .map((e) => [e, getEntryRank(e, windowInfo)])
+    .filter(([, r]) => r > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].title.localeCompare(b[0].title))
+    .map(([e]) => e);
+}
+
+function buildWindowInfo(title, url) {
+  // Prefer the real address-bar URL read natively; fall back to a URL in the title.
+  if (!url) {
+    const m = urlInTitleRegex.exec(title || "");
+    url = m && m.length ? m[0] : null;
+  }
+  return { title: title || "", url: url || null };
+}
+
+function toCandidate(e) {
+  return {
+    title: e.title || "",
+    username: e.username || "",
+    password: e.password || "",
+    url: e.url || "",
+    group: e.group_name || "",
+  };
+}
+
+async function runAutotypeForWindow(title, url) {
+  const windowInfo = buildWindowInfo(title, url);
+  let matches = rankEntries(windowInfo);
+  // Matched by URL but found nothing → retry by title (KeeWeb's fallback).
+  if (matches.length === 0 && windowInfo.url) {
+    matches = rankEntries({ title: windowInfo.title, url: null });
+  }
+
+  if (matches.length === 0) {
+    await invoke("focus_main_window");
+    showToast("No matching entries for this window");
+    return;
+  }
+  if (matches.length === 1) {
+    const c = toCandidate(matches[0]);
+    try {
+      await invoke("autotype_run", { username: c.username, password: c.password });
+    } catch (err) {
+      showToast("Auto-type failed: " + String(err));
+    }
+    return;
+  }
+  // Multiple matches → let the user choose in a separate window.
+  try {
+    await invoke("open_autotype_selector", { candidates: matches.map(toCandidate) });
+  } catch (err) {
+    showToast("Auto-type failed: " + String(err));
+  }
+}
+
+async function handleAutoType(title, url) {
+  if (!vaultData || !masterPassword) {
+    // Locked — bring the app forward, unlock, then resume for this same window.
+    pendingAutotype = { title, url };
+    await invoke("focus_main_window");
+    show("screen-unlock");
+    document.getElementById("master-pass").focus();
+    return;
+  }
+  await runAutotypeForWindow(title, url);
+}
+
+// ── Auto-type selector window ───────────────────────────────────────────────────
+async function initAutotypeSelector() {
+  document.querySelectorAll(".screen").forEach((s) => { s.style.display = "none"; });
+  const screen = document.getElementById("autotype-screen");
+  screen.classList.remove("hidden");
+
+  const listEl = document.getElementById("autotype-list");
+  let candidates = [];
+  try { candidates = await invoke("get_autotype_candidates"); } catch {}
+  document.getElementById("autotype-target").textContent =
+    `${candidates.length} matching entries`;
+
+  let selected = 0;
+
+  function updateSel() {
+    [...listEl.children].forEach((r, i) => r.classList.toggle("selected", i === selected));
+    listEl.children[selected]?.scrollIntoView({ block: "nearest" });
+  }
+  async function pick(i) {
+    try { await invoke("autotype_pick", { index: i }); } catch {}
+  }
+  async function cancel() {
+    try { await invoke("close_autotype_selector"); } catch {}
+  }
+
+  candidates.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "autotype-item" + (i === 0 ? " selected" : "");
+    row.innerHTML =
+      `<div class="at-title">${escHtml(c.title || "(no title)")}</div>` +
+      `<div class="at-sub">${escHtml(c.username || "")}${c.group ? " · " + escHtml(c.group) : ""}</div>`;
+    row.addEventListener("click", () => pick(i));
+    row.addEventListener("mousemove", () => { if (selected !== i) { selected = i; updateSel(); } });
+    listEl.appendChild(row);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { selected = Math.min(selected + 1, candidates.length - 1); updateSel(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { selected = Math.max(selected - 1, 0); updateSel(); e.preventDefault(); }
+    else if (e.key === "Enter") { pick(selected); e.preventDefault(); }
+    else if (e.key === "Escape") { cancel(); e.preventDefault(); }
+  });
+
+  const win = getCurrentWindow();
+  win.setFocus().catch(() => {});
+  // Cancel if the window loses focus (clicked away). Delay so the initial focus
+  // settle doesn't immediately trigger a cancel.
+  setTimeout(() => {
+    win.onFocusChanged(({ payload: focused }) => { if (!focused) cancel(); });
+  }, 500);
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // Tauri event: auto-type global hotkey was pressed
+  await listen("auto-type", (ev) =>
+    handleAutoType(ev.payload?.title || "", ev.payload?.url || null)
+  );
+
   // Tauri event: background WebDAV sync found a newer remote version
   await listen("db-remote-updated", () => {
     document.getElementById("sync-banner").classList.add("visible");
@@ -1214,6 +1412,13 @@ document.getElementById("form-unlock").addEventListener("submit", async (e) => {
     updateDbName();
     show("screen-vault");
     document.getElementById("search-input").focus();
+
+    // If an auto-type hotkey arrived while locked, resume it now.
+    if (pendingAutotype !== null) {
+      const { title, url } = pendingAutotype;
+      pendingAutotype = null;
+      runAutotypeForWindow(title, url);
+    }
   } catch (err) {
     setError("unlock-error", String(err));
     document.getElementById("master-pass").select();
@@ -1324,4 +1529,9 @@ document.getElementById("btn-change-config").addEventListener("click", () => {
   document.getElementById("btn-pick-local").focus();
 });
 
-init();
+// The selector window loads this same page with a query flag; render only it.
+if (new URLSearchParams(location.search).get("view") === "autotype-select") {
+  initAutotypeSelector();
+} else {
+  init();
+}

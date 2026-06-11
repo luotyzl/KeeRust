@@ -2,8 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2/capability.json",
   "identifier": "default",
   "description": "Default capability for KeeRust",
-  "windows": ["main"],
+  "windows": ["main", "autotype-select"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-unminimize"
   ]
 }
