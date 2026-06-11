@@ -4,6 +4,10 @@
   "description": "Default capability for KeeRust",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-unminimize"
   ]
 }

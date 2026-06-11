@@ -575,6 +575,73 @@ async function showEntryXml(e) {
 }
 
 // ── Edit form ─────────────────────────────────────────────────────────────────
+// ── Keystrokes field helper popup (KeeWeb auto-type hint) ───────────────────────
+const AT_FIELD_TOKENS = [
+  "{TITLE}", "{USERNAME}", "{URL}", "{PASSWORD}", "{NOTES}", "{GROUP}",
+  "{TOTP}", "{S:Custom Field Name}",
+];
+const AT_MOD_TOKENS = [
+  { label: "+ (shift)", ins: "+" },
+  { label: "% (alt)", ins: "%" },
+  { label: "^ (ctrl)", ins: "^" },
+];
+const AT_KEY_TOKENS = [
+  "{TAB}", "{ENTER}", "{SPACE}", "{DELAY=ms}","{UP}", "{DOWN}", "{LEFT}", "{RIGHT}", "{HOME}", "{END}",
+  "{+}", "{%}", "{^}", "{~}", "{(}", "{)}", "{[}", "{]}", "{{}", "{}}",
+];
+
+function insertAtCursor(input, text) {
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  const pos = start + text.length;
+  input.selectionStart = input.selectionEnd = pos;
+  input.focus();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// Show a clickable token popup under the keystrokes input (insert at cursor).
+function wireKeystrokeHelper(input) {
+  const wrap = input?.closest(".at-seq-wrap");
+  if (!wrap) return;
+  let helper = null;
+
+  const tokenLink = (tok) => `<a data-token="${escAttr(tok)}">${escHtml(tok)}</a>`;
+
+  function build() {
+    const h = document.createElement("div");
+    h.className = "at-helper";
+    h.innerHTML =
+      `<div class="at-helper-block">
+        <div class="at-helper-head"><span>Entry fields:</span>` +
+        `<a class="at-helper-more" href="https://keepass.info/help/base/autotype.html" target="_blank" rel="noreferrer">more…</a></div>
+        <div class="at-helper-tokens">${AT_FIELD_TOKENS.map(tokenLink).join("")}</div>
+      </div>` +
+      `<div class="at-helper-block">
+        <div class="at-helper-head"><span>Modifier keys:</span></div>
+        <div class="at-helper-tokens">${AT_MOD_TOKENS.map((m) => `<a data-token="${escAttr(m.ins)}">${escHtml(m.label)}</a>`).join("")}</div>
+      </div>` +
+      `<div class="at-helper-block">
+        <div class="at-helper-head"><span>Keys:</span></div>
+        <div class="at-helper-tokens">${AT_KEY_TOKENS.map(tokenLink).join("")}</div>
+      </div>`;
+    // Use mousedown + preventDefault so clicking a token doesn't blur the input.
+    h.addEventListener("mousedown", (ev) => {
+      const a = ev.target.closest("a[data-token]");
+      if (!a) return; // let the "more…" link behave normally
+      ev.preventDefault();
+      insertAtCursor(input, a.dataset.token);
+    });
+    return h;
+  }
+
+  function showHelper() { if (!helper) { helper = build(); wrap.appendChild(helper); } }
+  function hideHelper() { if (helper) { helper.remove(); helper = null; } }
+
+  input.addEventListener("focus", showHelper);
+  input.addEventListener("blur", () => setTimeout(hideHelper, 150));
+}
+
 function renderEditForm(entry) {
   stopOtpTimers();
   editMode = true;
@@ -587,6 +654,7 @@ function renderEditForm(entry) {
     title: "", username: "", password: "", url: "", notes: "",
     otp_uri: null, custom_fields: [],
     icon_id: 0, custom_icon_base64: null,
+    autotype_enabled: true, autotype_sequence: "", autotype_obfuscation: false,
   };
 
   // Currently chosen icon: built-in index, or -1 to keep an existing custom icon
@@ -665,6 +733,24 @@ function renderEditForm(entry) {
         <button class="icon-btn" id="edit-add-cf">+ Add Field</button>
       </div>
       <div id="edit-cf-container">${cfHtml}</div>
+
+      <div class="edit-section-header">Auto-Type</div>
+      <label class="edit-checkbox-row">
+        <input type="checkbox" id="edit-at-enabled" ${e.autotype_enabled !== false ? "checked" : ""} />
+        Enable auto-type for this entry
+      </label>
+      <div class="edit-field-group">
+        <label class="edit-label">Keystrokes</label>
+        <div class="edit-field-row at-seq-wrap">
+          <input class="edit-input" id="edit-at-seq" value="${escAttr(e.autotype_sequence || "")}"
+                 placeholder="${escAttr(DEFAULT_AT_SEQUENCE)}" autocomplete="off" />
+        </div>
+        <div class="edit-at-hint">Click the field to insert fields, modifiers and keys. Empty = default sequence.</div>
+      </div>
+      <label class="edit-checkbox-row">
+        <input type="checkbox" id="edit-at-obf" ${e.autotype_obfuscation ? "checked" : ""} />
+        Mix real keystrokes with random
+      </label>
 
       <div class="edit-actions">
         <button class="btn-save-entry" id="edit-save">Save</button>
@@ -751,6 +837,9 @@ function renderEditForm(entry) {
     }
   });
 
+  // Keystrokes field: clickable token popup on focus
+  wireKeystrokeHelper(el.querySelector("#edit-at-seq"));
+
   // Cancel
   el.querySelector("#edit-cancel").addEventListener("click", () => {
     editMode = false;
@@ -782,6 +871,9 @@ function renderEditForm(entry) {
       custom_fields: customFields,
       icon_id: selectedIconId, // -1 keeps an existing custom icon untouched
       custom_icon_base64: pendingCustomIcon, // set only when a favicon was just downloaded
+      autotype_enabled: el.querySelector("#edit-at-enabled").checked,
+      autotype_sequence: el.querySelector("#edit-at-seq").value.trim(),
+      autotype_obfuscation: el.querySelector("#edit-at-obf").checked,
     };
 
     const saveBtn = el.querySelector("#edit-save");
@@ -1084,8 +1176,532 @@ document.getElementById("btn-sync-now").addEventListener("click", async () => {
   }
 });
 
+// ── Auto-type (global hotkey Alt+Shift+T) ──────────────────────────────────────
+// Matching mirrors KeeWeb's SelectEntryFilter: rank entries by URL (domain /
+// subdomain / path / scheme) and by window-title string match, dropping zero-rank.
+let pendingAutotype = null;
+
+const urlPartsRegex = /^(\w+:\/\/)?(?:(?:www|wwws|secure)\.)?([^\/]+)\/?(.*)/;
+const urlInTitleRegex =
+  /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,4}\b([-a-zA-Z0-9@:%_\+.~#?&\/=]*)/;
+
+function getStringRank(s1, s2) {
+  if (!s1 || !s2) return 0;
+  let ix = s1.indexOf(s2);
+  if (ix === 0 && s1.length === s2.length) return 10;
+  if (ix === 0) return 5;
+  if (ix > 0) return 3;
+  ix = s2.indexOf(s1);
+  if (ix === 0) return 5;
+  if (ix > 0) return 3;
+  return 0;
+}
+
+function entryAllUrls(e) {
+  const urls = e.url ? [e.url] : [];
+  for (const f of e.custom_fields || []) {
+    if (/url/i.test(f.name) && f.value) urls.push(f.value);
+  }
+  return urls;
+}
+
+// Port of KeeWeb SelectEntryFilter._getEntryRank — honors the filter's toggles.
+function rankEntry(e, f) {
+  let titleRank = 0;
+  let urlRank = 0;
+
+  if (f.useTitle && f.title && e.title) {
+    titleRank = getStringRank(e.title.toLowerCase(), f.title.toLowerCase());
+    if (!titleRank) return 0;
+  }
+
+  if (f.useUrl && f.url) {
+    const searchParts = urlPartsRegex.exec(f.url.toLowerCase());
+    if (searchParts) {
+      const [, searchScheme, searchDomain, searchPath] = searchParts;
+      for (const url of entryAllUrls(e)) {
+        const parts = urlPartsRegex.exec(url.toLowerCase());
+        if (!parts) continue;
+        const [, scheme, domain, path] = parts;
+        if (domain === searchDomain || (f.subdomains && searchDomain.indexOf("." + domain) > 0)) {
+          urlRank += domain === searchDomain ? 20 : 10;
+          if (path === searchPath) urlRank += 10;
+          else if (path && searchPath) {
+            if (path.lastIndexOf(searchPath, 0) === 0) urlRank += 5;
+            else if (searchPath.lastIndexOf(path, 0) === 0) urlRank += 3;
+          }
+          if (scheme === searchScheme) urlRank += 1;
+        }
+      }
+    }
+  }
+
+  if (f.useTitle && !titleRank) return 0;
+  if (f.useUrl && !urlRank) return 0;
+  return titleRank + urlRank;
+}
+
+// True if the free-text filter matches any searchable field (KeeWeb getEntriesByFilter).
+function entryMatchesText(e, t) {
+  if (!t) return true;
+  const parts = [e.title, e.username, e.url, e.notes, e.group_name];
+  for (const cf of e.custom_fields || []) parts.push(cf.name, cf.value);
+  return parts.filter(Boolean).join("\n").toLowerCase().includes(t);
+}
+
+// Apply a filter (text → rank by url/title) and return the matching entries.
+// Port of SelectEntryFilter.getEntries: when neither url nor title is active,
+// every (text-matching) entry qualifies.
+function filterGetEntries(f) {
+  if (!vaultData) return [];
+  const rbUuid = vaultData.recycle_bin_uuid;
+  const t = (f.text || "").toLowerCase();
+  let list = vaultData.entries
+    .filter((e) => e.group_uuid !== rbUuid) // never auto-type from the recycle bin
+    .filter((e) => e.autotype_enabled !== false) // skip entries with auto-type disabled
+    .filter((e) => entryMatchesText(e, t))
+    .map((e) => [e, rankEntry(e, f)]);
+  if (f.useUrl || f.useTitle) list = list.filter(([, r]) => r > 0);
+  return list
+    .sort((a, b) => b[1] - a[1] || a[0].title.localeCompare(b[0].title))
+    .map(([e]) => e);
+}
+
+function buildWindowInfo(title, url) {
+  // Prefer the real address-bar URL read natively; fall back to a URL in the title.
+  if (!url) {
+    const m = urlInTitleRegex.exec(title || "");
+    url = m && m.length ? m[0] : null;
+  }
+  return { title: title || "", url: url || null };
+}
+
+// Build the initial filter from the captured window (KeeWeb SelectEntryFilter ctor).
+function makeFilter(windowInfo) {
+  return {
+    title: windowInfo.title || "",
+    url: windowInfo.url || "",
+    useTitle: !!windowInfo.title && !windowInfo.url,
+    useUrl: !!windowInfo.url,
+    subdomains: true,
+    text: "",
+  };
+}
+
+// Strip scheme / www. for compact display of the matched URL.
+function shortUrl(url) {
+  return url.replace(/^\w+:\/\//, "").replace(/^(?:www|wwws|secure)\./, "").replace(/\/$/, "");
+}
+
+// ── Auto-type select-entry view (shown in the main window) ──────────────────────
+let selectFilter = null;
+let selectEntries = [];
+let selectIndex = 0;
+
+// ── Auto-type keystroke sequence (KeeWeb grammar) ───────────────────────────────
+const DEFAULT_AT_SEQUENCE = "{USERNAME}{TAB}{PASSWORD}{ENTER}";
+
+// Named keys → canonical names understood by the Rust executor.
+const AT_KEYS = {
+  tab: "tab", enter: "enter", space: "space",
+  up: "up", down: "down", left: "left", right: "right",
+  home: "home", end: "end", pgup: "pageup", pgdn: "pagedown",
+  insert: "insert", ins: "insert", delete: "delete", del: "delete",
+  backspace: "backspace", bs: "backspace", bksp: "backspace", esc: "escape",
+  add: "add", subtract: "subtract", multiply: "multiply", divide: "divide",
+  numpad0: "num0", numpad1: "num1", numpad2: "num2", numpad3: "num3", numpad4: "num4",
+  numpad5: "num5", numpad6: "num6", numpad7: "num7", numpad8: "num8", numpad9: "num9",
+};
+for (let i = 1; i <= 16; i++) AT_KEYS["f" + i] = "f" + i;
+
+function entryFieldValue(entry, name) {
+  switch ((name || "").toLowerCase()) {
+    case "title": return entry.title || "";
+    case "username": return entry.username || "";
+    case "url": return entry.url || "";
+    case "password": return entry.password || "";
+    case "notes": return entry.notes || "";
+    case "group": return entry.group_name || "";
+    default: {
+      const cf = (entry.custom_fields || []).find(
+        (f) => f.name.toLowerCase() === (name || "").toLowerCase()
+      );
+      return cf ? cf.value : "";
+    }
+  }
+}
+
+// Text with no modifiers → fast text action; with modifiers → one key per char.
+function pushTextWithMods(actions, text, mods) {
+  if (!text) return;
+  if (!mods || mods.length === 0) actions.push({ type: "text", value: text });
+  else for (const ch of text) actions.push({ type: "key", key: ch, mods });
+}
+
+async function applyAtOp(actions, contents, mods, entry) {
+  const m = contents.match(/^(.*?)(?:([\s:=])[\s:=]*(.*))?$/);
+  const op = (m[1] || "").toLowerCase();
+  const arg = m[3];
+
+  if (["title", "username", "url", "password", "notes", "group"].includes(op)) {
+    pushTextWithMods(actions, entryFieldValue(entry, op), mods);
+  } else if (op === "s") {
+    pushTextWithMods(actions, entryFieldValue(entry, arg || ""), mods);
+  } else if (op === "totp") {
+    let code = "";
+    if (entry.otp_uri) {
+      const p = parseOtpUri(entry.otp_uri);
+      code = (await computeTOTP(p.secret, p.period, p.digits, p.algorithm)) || "";
+    }
+    pushTextWithMods(actions, code, mods);
+  } else if (op === "delay") {
+    const ms = parseInt(arg || "0", 10);
+    if (ms > 0) actions.push({ type: "delay", ms });
+  } else if (op === "clearfield") {
+    actions.push({ type: "key", key: "a", mods: ["ctrl"] });
+    actions.push({ type: "key", key: "delete", mods: [] });
+  } else if (AT_KEYS[op]) {
+    actions.push({ type: "key", key: AT_KEYS[op], mods });
+  }
+  // Unknown ops are ignored (lenient).
+}
+
+// Parse a KeeWeb keystroke sequence into a flat action list, resolving entry fields.
+async function buildAutoTypeActions(sequence, entry) {
+  const actions = [];
+  const s = sequence || "";
+  const n = s.length;
+  let i = 0;
+  let mods = [];
+  const groupStack = [];
+  const takeMods = () => { const m = [...groupStack.flat(), ...mods]; mods = []; return m; };
+
+  while (i < n) {
+    const ch = s[i];
+    if (ch === "{") {
+      const end = s.indexOf("}", i + 2); // +2 so {}} reads the literal '}'
+      if (end < 0) throw "Mismatched '{' in sequence";
+      const contents = s.substring(i + 1, end);
+      i = end + 1;
+      if (contents.length === 1) pushTextWithMods(actions, contents, takeMods());
+      else await applyAtOp(actions, contents, takeMods(), entry);
+    } else if (ch === "+" || ch === "^" || ch === "%") {
+      mods.push(ch === "+" ? "shift" : ch === "^" ? "ctrl" : "alt");
+      i++;
+    } else if (ch === "(") {
+      groupStack.push([...mods]); mods = []; i++;
+    } else if (ch === ")") {
+      if (!groupStack.length) throw "Unexpected ')' in sequence";
+      groupStack.pop(); i++;
+    } else if (ch === "~") {
+      actions.push({ type: "key", key: "enter", mods: takeMods() }); i++;
+    } else if (ch === " ") {
+      i++; // KeeWeb ignores spaces
+    } else {
+      pushTextWithMods(actions, ch, takeMods()); i++;
+    }
+  }
+  return actions;
+}
+
+// Auto-type the entry's full sequence (its custom one, or the global default).
+async function typeCreds(e) {
+  const seq = (e.autotype_sequence && e.autotype_sequence.trim()) || DEFAULT_AT_SEQUENCE;
+  try {
+    const actions = await buildAutoTypeActions(seq, e);
+    await invoke("autotype_sequence", { actions });
+  } catch (err) {
+    showToast("Auto-type failed: " + String(err));
+  }
+}
+
+// Type a single field's value into the target window.
+function typeField(text) {
+  return invoke("autotype_text", { text: text || "" })
+    .catch((err) => showToast("Auto-type failed: " + String(err)));
+}
+
+// Close the view, then auto-type the given field value.
+function pickField(text) {
+  closeSelectView();
+  typeField(text);
+}
+
+function closeSelectView() {
+  closeActionsMenu();
+  selectFilter = null;
+  selectEntries = [];
+  selectIndex = 0;
+  show("screen-vault");
+}
+
+function updateSelectHighlight() {
+  const rows = document.querySelectorAll("#select-list .select-item");
+  rows.forEach((r, i) => r.classList.toggle("selected", i === selectIndex));
+  rows[selectIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+// The 3 condition chips (Website / Subdomains / Title) + a live "Contains" chip.
+function buildFilterChips(f) {
+  const chips = [];
+  if (f.url) {
+    chips.push({ id: "url", label: "Website", text: shortUrl(f.url), active: f.useUrl });
+    chips.push({ id: "subdomains", label: "Subdomains", text: "", active: f.useUrl && f.subdomains });
+  }
+  if (f.title) {
+    chips.push({ id: "title", label: "Title", text: f.title, active: f.useTitle });
+  }
+  if (f.text) {
+    chips.push({ id: "text", label: "Contains", text: f.text, active: true });
+  }
+  return chips;
+}
+
+// Toggle a condition (port of SelectEntryView.filterClicked).
+function onFilterClick(id) {
+  const f = selectFilter;
+  if (id === "url") f.useUrl = !f.useUrl;
+  else if (id === "subdomains") {
+    const active = !(f.useUrl && f.subdomains);
+    f.subdomains = active;
+    if (active) f.useUrl = true;
+  } else if (id === "title") f.useTitle = !f.useTitle;
+  else if (id === "text") f.text = "";
+  renderSelectView();
+}
+
+function renderSelectView() {
+  const f = selectFilter;
+  selectEntries = filterGetEntries(f);
+  if (selectIndex >= selectEntries.length) selectIndex = 0;
+
+  const target = f.title || shortUrl(f.url || "");
+  document.getElementById("select-message").textContent = target
+    ? `Select a password for ${target}`
+    : "Select an entry to auto-type";
+
+  const chipsEl = document.getElementById("select-filters");
+  chipsEl.innerHTML = "";
+  for (const chip of buildFilterChips(f)) {
+    const el = document.createElement("div");
+    el.className = "select-filter" + (chip.active ? " active" : "");
+    el.innerHTML =
+      `<span class="sf-check">${chip.active ? "☑" : "☐"}</span>` +
+      `<span class="sf-text">${escHtml(chip.label)}${chip.text ? ": " + escHtml(chip.text) : ""}</span>`;
+    el.addEventListener("click", () => onFilterClick(chip.id));
+    chipsEl.appendChild(el);
+  }
+
+  const listEl = document.getElementById("select-list");
+  closeActionsMenu();
+  listEl.innerHTML = "";
+  if (selectEntries.length === 0) {
+    listEl.innerHTML = `<div class="select-empty">No matching entries</div>`;
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "select-table";
+  table.innerHTML =
+    `<thead><tr>` +
+    `<th>Title</th><th>Username</th><th>Website</th>` +
+    `<th class="actions-col">Actions</th>` +
+    `</tr></thead>`;
+  const tbody = document.createElement("tbody");
+
+  selectEntries.forEach((e, i) => {
+    const tr = document.createElement("tr");
+    tr.className = "select-item" + (i === selectIndex ? " selected" : "");
+    tr.innerHTML =
+      `<td title="${escAttr(e.title || "")}">${escHtml(e.title || "(no title)")}</td>` +
+      `<td class="col-user" title="${escAttr(e.username || "")}">${escHtml(e.username || "")}</td>` +
+      `<td class="col-url" title="${escAttr(e.url || "")}">${escHtml(e.url || "")}</td>` +
+      `<td class="actions-cell"><button class="select-actions-btn" title="More…">⋯</button></td>`;
+
+    tr.addEventListener("click", (ev) => {
+      if (ev.target.closest(".select-actions-btn")) return; // let the menu handle it
+      closeSelectView();
+      typeCreds(e);
+    });
+    tr.addEventListener("mousemove", () => { if (selectIndex !== i) { selectIndex = i; updateSelectHighlight(); } });
+    tr.querySelector(".select-actions-btn").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      selectIndex = i;
+      updateSelectHighlight();
+      openActionsMenu(ev.currentTarget, e);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  listEl.appendChild(table);
+}
+
+// Per-row "⋯" actions menu (currently: copy password to clipboard).
+let actionsMenuEl = null;
+
+function closeActionsMenu() {
+  if (actionsMenuEl) {
+    actionsMenuEl.remove();
+    actionsMenuEl = null;
+    document.removeEventListener("click", onActionsOutside, true);
+  }
+}
+
+function onActionsOutside(ev) {
+  if (actionsMenuEl && !actionsMenuEl.contains(ev.target)) closeActionsMenu();
+}
+
+function addMenuItem(menu, label, handler) {
+  const btn = document.createElement("button");
+  btn.className = "select-actions-item";
+  btn.textContent = label;
+  btn.addEventListener("click", (ev) => { ev.stopPropagation(); handler(); });
+  menu.appendChild(btn);
+}
+
+// The per-entry "other fields" menu (⋯ button and Shift+Enter): auto-type any
+// individual field, plus copy the password to the clipboard.
+function openActionsMenu(btn, e) {
+  closeActionsMenu();
+  const menu = document.createElement("div");
+  menu.className = "select-actions-menu";
+
+  if (e.password) addMenuItem(menu, "Type password", () => { closeActionsMenu(); pickField(e.password); });
+  if (e.username) addMenuItem(menu, "Type username", () => { closeActionsMenu(); pickField(e.username); });
+  if (e.otp_uri) {
+    addMenuItem(menu, "Type one-time code", async () => {
+      closeActionsMenu();
+      const { secret, period, digits, algorithm } = parseOtpUri(e.otp_uri);
+      const code = await computeTOTP(secret, period, digits, algorithm);
+      if (code) pickField(code);
+      else showToast("Could not generate one-time code");
+    });
+  }
+  for (const cf of e.custom_fields || []) {
+    addMenuItem(menu, `Type: ${cf.name}`, () => { closeActionsMenu(); pickField(cf.value); });
+  }
+
+  const div = document.createElement("div");
+  div.className = "select-actions-divider";
+  menu.appendChild(div);
+  addMenuItem(menu, "🔑 Copy password", () => {
+    copyText(e.password || "", "Password");
+    closeActionsMenu();
+  });
+
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 4}px`;
+  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+  actionsMenuEl = menu;
+  // Defer so the click that opened the menu doesn't immediately close it.
+  setTimeout(() => document.addEventListener("click", onActionsOutside, true), 0);
+}
+
+// Open the options menu for the keyboard-selected row (Shift+Enter).
+function openOptionsMenuForSelected() {
+  const rows = document.querySelectorAll("#select-list .select-item");
+  const row = rows[selectIndex];
+  const e = selectEntries[selectIndex];
+  if (row && e) openActionsMenu(row.querySelector(".select-actions-btn"), e);
+}
+
+async function openSelectView(filter) {
+  selectFilter = filter;
+  selectIndex = 0;
+  await invoke("focus_main_window"); // bring the app forward from the taskbar
+  renderSelectView();
+  show("screen-select");
+}
+
+async function runAutotypeForWindow(title, url) {
+  const filter = makeFilter(buildWindowInfo(title, url));
+  let matches = filterGetEntries(filter);
+
+  // Exactly one match → type it straight away (KeeWeb directAutotype).
+  if (matches.length === 1) {
+    await typeCreds(matches[0]);
+    return;
+  }
+  // No match → relax url→title so the select view opens with candidates to choose
+  // from (KeeWeb processEventWithFilter fallback). With both off, all entries show.
+  if (matches.length === 0) {
+    if (filter.useUrl) {
+      filter.useUrl = false;
+      if (filter.title) filter.useTitle = true;
+    }
+    matches = filterGetEntries(filter);
+    if (matches.length === 0 && filter.useTitle) filter.useTitle = false;
+  }
+  await openSelectView(filter);
+}
+
+async function handleAutoType(title, url) {
+  if (!vaultData || !masterPassword) {
+    // Locked — bring the app forward, unlock, then resume for this same window.
+    pendingAutotype = { title, url };
+    await invoke("focus_main_window");
+    show("screen-unlock");
+    document.getElementById("master-pass").focus();
+    return;
+  }
+  await runAutotypeForWindow(title, url);
+}
+
+// Select-view keyboard handling: navigate, pick, cancel, and type-to-filter.
+document.addEventListener("keydown", (e) => {
+  if (!document.getElementById("screen-select").classList.contains("active")) return;
+  // When the actions menu is open, Esc closes it first; swallow other keys.
+  if (actionsMenuEl) {
+    if (e.key === "Escape") { closeActionsMenu(); e.preventDefault(); }
+    return;
+  }
+  if (e.key === "ArrowDown") {
+    selectIndex = Math.min(selectIndex + 1, selectEntries.length - 1);
+    updateSelectHighlight();
+    e.preventDefault();
+  } else if (e.key === "ArrowUp") {
+    selectIndex = Math.max(selectIndex - 1, 0);
+    updateSelectHighlight();
+    e.preventDefault();
+  } else if (e.key === "Enter") {
+    const en = selectEntries[selectIndex];
+    if (en) {
+      if (e.shiftKey) {
+        openOptionsMenuForSelected(); // other fields
+      } else if (e.ctrlKey || e.metaKey) {
+        pickField(en.password); // password only
+      } else if (e.altKey) {
+        pickField(en.username); // username only
+      } else {
+        closeSelectView();
+        typeCreds(en); // full sequence
+      }
+    }
+    e.preventDefault();
+  } else if (e.key === "Escape") {
+    closeSelectView();
+    e.preventDefault();
+  } else if (e.key === "Backspace") {
+    if (selectFilter.text) { selectFilter.text = selectFilter.text.slice(0, -1); renderSelectView(); }
+    e.preventDefault();
+  } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    selectFilter.text += e.key;
+    renderSelectView();
+    e.preventDefault();
+  }
+});
+
+document.getElementById("select-cancel").addEventListener("click", closeSelectView);
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // Tauri event: auto-type global hotkey was pressed
+  await listen("auto-type", (ev) =>
+    handleAutoType(ev.payload?.title || "", ev.payload?.url || null)
+  );
+
   // Tauri event: background WebDAV sync found a newer remote version
   await listen("db-remote-updated", () => {
     document.getElementById("sync-banner").classList.add("visible");
@@ -1214,6 +1830,13 @@ document.getElementById("form-unlock").addEventListener("submit", async (e) => {
     updateDbName();
     show("screen-vault");
     document.getElementById("search-input").focus();
+
+    // If an auto-type hotkey arrived while locked, resume it now.
+    if (pendingAutotype !== null) {
+      const { title, url } = pendingAutotype;
+      pendingAutotype = null;
+      runAutotypeForWindow(title, url);
+    }
   } catch (err) {
     setError("unlock-error", String(err));
     document.getElementById("master-pass").select();

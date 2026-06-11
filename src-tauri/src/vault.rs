@@ -47,6 +47,9 @@ pub struct EntryData {
     pub history: Vec<HistoryEntry>,
     pub icon_id: i64,                       // built-in icon index 0-68, or -1 if custom
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
+    pub autotype_enabled: bool,             // whether auto-type is enabled for this entry
+    pub autotype_sequence: String,          // custom default keystroke sequence ("" = global default)
+    pub autotype_obfuscation: bool,         // "mix real keystrokes with random" flag
 }
 
 #[derive(Serialize, Clone)]
@@ -91,6 +94,9 @@ pub struct EntryUpdate {
     pub custom_fields: Vec<CustomFieldUpdate>,
     pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave the existing icon unchanged
     pub custom_icon_base64: Option<String>, // when set, store as a new custom icon (e.g. favicon)
+    pub autotype_enabled: bool,
+    pub autotype_sequence: String, // "" = inherit the global default sequence
+    pub autotype_obfuscation: bool,
 }
 
 // ── Cache path ────────────────────────────────────────────────────────────────
@@ -325,6 +331,17 @@ fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
             entry.set_unprotected(&cf.name, &cf.value);
         }
     }
+
+    // Auto-type settings — keep any existing window associations intact.
+    let mut at = entry.autotype.take().unwrap_or_default();
+    at.enabled = update.autotype_enabled;
+    at.default_sequence = if update.autotype_sequence.trim().is_empty() {
+        None
+    } else {
+        Some(update.autotype_sequence.clone())
+    };
+    at.data_transfer_obfuscation = Some(update.autotype_obfuscation);
+    entry.autotype = Some(at);
 }
 
 // ── Entry builder ─────────────────────────────────────────────────────────────
@@ -356,6 +373,16 @@ fn entry_to_data(
     custom_fields.sort_by(|a, b| a.name.cmp(&b.name));
 
     let otp_uri = resolve_otp_uri(entry);
+
+    // Auto-type settings (absent <AutoType> ⇒ enabled, inherit default sequence).
+    let (autotype_enabled, autotype_sequence, autotype_obfuscation) = match &entry.autotype {
+        Some(at) => (
+            at.enabled,
+            at.default_sequence.clone().unwrap_or_default(),
+            at.data_transfer_obfuscation.unwrap_or(false),
+        ),
+        None => (true, String::new(), false),
+    };
 
     let history: Vec<HistoryEntry> = entry
         .history
@@ -391,6 +418,9 @@ fn entry_to_data(
         history,
         icon_id,
         custom_icon_base64,
+        autotype_enabled,
+        autotype_sequence,
+        autotype_obfuscation,
     }
 }
 
