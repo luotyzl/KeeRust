@@ -1211,6 +1211,7 @@ function typeCreds(e) {
 }
 
 function closeSelectView() {
+  closeActionsMenu();
   selectFilter = null;
   selectEntries = [];
   selectIndex = 0;
@@ -1218,9 +1219,9 @@ function closeSelectView() {
 }
 
 function updateSelectHighlight() {
-  const listEl = document.getElementById("select-list");
-  [...listEl.children].forEach((r, i) => r.classList.toggle("selected", i === selectIndex));
-  listEl.children[selectIndex]?.scrollIntoView({ block: "nearest" });
+  const rows = document.querySelectorAll("#select-list .select-item");
+  rows.forEach((r, i) => r.classList.toggle("selected", i === selectIndex));
+  rows[selectIndex]?.scrollIntoView({ block: "nearest" });
 }
 
 // The 3 condition chips (Website / Subdomains / Title) + a live "Contains" chip.
@@ -1275,21 +1276,87 @@ function renderSelectView() {
   }
 
   const listEl = document.getElementById("select-list");
+  closeActionsMenu();
   listEl.innerHTML = "";
   if (selectEntries.length === 0) {
     listEl.innerHTML = `<div class="select-empty">No matching entries</div>`;
     return;
   }
+
+  const table = document.createElement("table");
+  table.className = "select-table";
+  table.innerHTML =
+    `<thead><tr>` +
+    `<th>Title</th><th>Username</th><th>Website</th>` +
+    `<th class="actions-col">Actions</th>` +
+    `</tr></thead>`;
+  const tbody = document.createElement("tbody");
+
   selectEntries.forEach((e, i) => {
-    const row = document.createElement("div");
-    row.className = "select-item" + (i === selectIndex ? " selected" : "");
-    row.innerHTML =
-      `<div class="si-title">${escHtml(e.title || "(no title)")}</div>` +
-      `<div class="si-sub">${escHtml(e.username || "")}${e.group_name ? " · " + escHtml(e.group_name) : ""}</div>`;
-    row.addEventListener("click", () => { closeSelectView(); typeCreds(e); });
-    row.addEventListener("mousemove", () => { if (selectIndex !== i) { selectIndex = i; updateSelectHighlight(); } });
-    listEl.appendChild(row);
+    const tr = document.createElement("tr");
+    tr.className = "select-item" + (i === selectIndex ? " selected" : "");
+    tr.innerHTML =
+      `<td title="${escAttr(e.title || "")}">${escHtml(e.title || "(no title)")}</td>` +
+      `<td class="col-user" title="${escAttr(e.username || "")}">${escHtml(e.username || "")}</td>` +
+      `<td class="col-url" title="${escAttr(e.url || "")}">${escHtml(e.url || "")}</td>` +
+      `<td class="actions-cell"><button class="select-actions-btn" title="More…">⋯</button></td>`;
+
+    tr.addEventListener("click", (ev) => {
+      if (ev.target.closest(".select-actions-btn")) return; // let the menu handle it
+      closeSelectView();
+      typeCreds(e);
+    });
+    tr.addEventListener("mousemove", () => { if (selectIndex !== i) { selectIndex = i; updateSelectHighlight(); } });
+    tr.querySelector(".select-actions-btn").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      selectIndex = i;
+      updateSelectHighlight();
+      openActionsMenu(ev.currentTarget, e);
+    });
+    tbody.appendChild(tr);
   });
+
+  table.appendChild(tbody);
+  listEl.appendChild(table);
+}
+
+// Per-row "⋯" actions menu (currently: copy password to clipboard).
+let actionsMenuEl = null;
+
+function closeActionsMenu() {
+  if (actionsMenuEl) {
+    actionsMenuEl.remove();
+    actionsMenuEl = null;
+    document.removeEventListener("click", onActionsOutside, true);
+  }
+}
+
+function onActionsOutside(ev) {
+  if (actionsMenuEl && !actionsMenuEl.contains(ev.target)) closeActionsMenu();
+}
+
+function openActionsMenu(btn, e) {
+  closeActionsMenu();
+  const menu = document.createElement("div");
+  menu.className = "select-actions-menu";
+
+  const pwBtn = document.createElement("button");
+  pwBtn.className = "select-actions-item";
+  pwBtn.textContent = "🔑 Copy password";
+  pwBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    copyText(e.password || "", "Password");
+    closeActionsMenu();
+  });
+  menu.appendChild(pwBtn);
+
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 4}px`;
+  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+  actionsMenuEl = menu;
+  // Defer so the click that opened the menu doesn't immediately close it.
+  setTimeout(() => document.addEventListener("click", onActionsOutside, true), 0);
 }
 
 async function openSelectView(filter) {
@@ -1337,6 +1404,11 @@ async function handleAutoType(title, url) {
 // Select-view keyboard handling: navigate, pick, cancel, and type-to-filter.
 document.addEventListener("keydown", (e) => {
   if (!document.getElementById("screen-select").classList.contains("active")) return;
+  // When the actions menu is open, Esc closes it first; swallow other keys.
+  if (actionsMenuEl) {
+    if (e.key === "Escape") { closeActionsMenu(); e.preventDefault(); }
+    return;
+  }
   if (e.key === "ArrowDown") {
     selectIndex = Math.min(selectIndex + 1, selectEntries.length - 1);
     updateSelectHighlight();
