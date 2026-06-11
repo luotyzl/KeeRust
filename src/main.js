@@ -1210,6 +1210,18 @@ function typeCreds(e) {
     .catch((err) => showToast("Auto-type failed: " + String(err)));
 }
 
+// Type a single field's value into the target window.
+function typeField(text) {
+  return invoke("autotype_text", { text: text || "" })
+    .catch((err) => showToast("Auto-type failed: " + String(err)));
+}
+
+// Close the view, then auto-type the given field value.
+function pickField(text) {
+  closeSelectView();
+  typeField(text);
+}
+
 function closeSelectView() {
   closeActionsMenu();
   selectFilter = null;
@@ -1258,10 +1270,10 @@ function renderSelectView() {
   selectEntries = filterGetEntries(f);
   if (selectIndex >= selectEntries.length) selectIndex = 0;
 
-  const target = f.title || f.url;
+  const target = f.title || shortUrl(f.url || "");
   document.getElementById("select-message").textContent = target
-    ? `Matched window: ${target}`
-    : "No window information — showing all entries";
+    ? `Select a password for ${target}`
+    : "Select an entry to auto-type";
 
   const chipsEl = document.getElementById("select-filters");
   chipsEl.innerHTML = "";
@@ -1335,20 +1347,43 @@ function onActionsOutside(ev) {
   if (actionsMenuEl && !actionsMenuEl.contains(ev.target)) closeActionsMenu();
 }
 
+function addMenuItem(menu, label, handler) {
+  const btn = document.createElement("button");
+  btn.className = "select-actions-item";
+  btn.textContent = label;
+  btn.addEventListener("click", (ev) => { ev.stopPropagation(); handler(); });
+  menu.appendChild(btn);
+}
+
+// The per-entry "other fields" menu (⋯ button and Shift+Enter): auto-type any
+// individual field, plus copy the password to the clipboard.
 function openActionsMenu(btn, e) {
   closeActionsMenu();
   const menu = document.createElement("div");
   menu.className = "select-actions-menu";
 
-  const pwBtn = document.createElement("button");
-  pwBtn.className = "select-actions-item";
-  pwBtn.textContent = "🔑 Copy password";
-  pwBtn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
+  if (e.password) addMenuItem(menu, "Type password", () => { closeActionsMenu(); pickField(e.password); });
+  if (e.username) addMenuItem(menu, "Type username", () => { closeActionsMenu(); pickField(e.username); });
+  if (e.otp_uri) {
+    addMenuItem(menu, "Type one-time code", async () => {
+      closeActionsMenu();
+      const { secret, period, digits, algorithm } = parseOtpUri(e.otp_uri);
+      const code = await computeTOTP(secret, period, digits, algorithm);
+      if (code) pickField(code);
+      else showToast("Could not generate one-time code");
+    });
+  }
+  for (const cf of e.custom_fields || []) {
+    addMenuItem(menu, `Type: ${cf.name}`, () => { closeActionsMenu(); pickField(cf.value); });
+  }
+
+  const div = document.createElement("div");
+  div.className = "select-actions-divider";
+  menu.appendChild(div);
+  addMenuItem(menu, "🔑 Copy password", () => {
     copyText(e.password || "", "Password");
     closeActionsMenu();
   });
-  menu.appendChild(pwBtn);
 
   document.body.appendChild(menu);
   const r = btn.getBoundingClientRect();
@@ -1357,6 +1392,14 @@ function openActionsMenu(btn, e) {
   actionsMenuEl = menu;
   // Defer so the click that opened the menu doesn't immediately close it.
   setTimeout(() => document.addEventListener("click", onActionsOutside, true), 0);
+}
+
+// Open the options menu for the keyboard-selected row (Shift+Enter).
+function openOptionsMenuForSelected() {
+  const rows = document.querySelectorAll("#select-list .select-item");
+  const row = rows[selectIndex];
+  const e = selectEntries[selectIndex];
+  if (row && e) openActionsMenu(row.querySelector(".select-actions-btn"), e);
 }
 
 async function openSelectView(filter) {
@@ -1419,7 +1462,18 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
   } else if (e.key === "Enter") {
     const en = selectEntries[selectIndex];
-    if (en) { closeSelectView(); typeCreds(en); }
+    if (en) {
+      if (e.shiftKey) {
+        openOptionsMenuForSelected(); // other fields
+      } else if (e.ctrlKey || e.metaKey) {
+        pickField(en.password); // password only
+      } else if (e.altKey) {
+        pickField(en.username); // username only
+      } else {
+        closeSelectView();
+        typeCreds(en); // full sequence
+      }
+    }
     e.preventDefault();
   } else if (e.key === "Escape") {
     closeSelectView();

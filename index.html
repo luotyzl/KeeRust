@@ -667,9 +667,16 @@
         display: flex; flex-direction: column; height: 100vh;
         padding: 1.25rem 1.5rem; box-sizing: border-box;
       }
-      .select-title { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; margin: 0; }
-      .select-hint { font-size: 0.74rem; color: #475569; margin-top: 0.2rem; }
-      .select-message { font-size: 0.8rem; color: #94a3b8; margin: 0.6rem 0; }
+      .select-header {
+        display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem;
+      }
+      .select-title { font-size: 1.6rem; font-weight: 700; color: #e2e8f0; margin: 0; }
+      .select-shortcuts {
+        text-align: right; font-size: 0.72rem; color: #64748b; line-height: 1.55;
+        white-space: nowrap; flex-shrink: 0;
+      }
+      .select-shortcuts .sc-key { color: #94a3b8; }
+      .select-message { font-size: 0.85rem; color: #94a3b8; margin: 0.8rem 0 0.7rem; }
       .select-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
       .select-filter {
         display: flex; align-items: center; gap: 0.35rem;
@@ -729,6 +736,7 @@
         border-radius: 6px;
       }
       .select-actions-item:hover { background: #1e3a5f; }
+      .select-actions-divider { height: 1px; background: #2d3748; margin: 0.25rem 0; }
 
       .copied-toast {
         position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
@@ -858,8 +866,15 @@
     <!-- Auto-type: choose an entry (replaces the page in the main window) -->
     <div id="screen-select" class="screen">
       <div class="select-screen">
-        <h2 class="select-title">Auto-Type</h2>
-        <div class="select-hint">↑↓ to move · Enter to auto-type · Esc to cancel · type to filter</div>
+        <div class="select-header">
+          <h2 class="select-title">Auto-Type: Select</h2>
+          <div class="select-shortcuts">
+            <div><span class="sc-key">Enter</span>: Type the auto-type sequence</div>
+            <div><span class="sc-key">Ctrl + Enter</span>: Only type the password</div>
+            <div><span class="sc-key">Alt + Enter</span>: Only type the username</div>
+            <div><span class="sc-key">Shift + Enter</span>: Other fields</div>
+          </div>
+        </div>
         <div class="select-message" id="select-message"></div>
         <div class="select-filters" id="select-filters"></div>
         <div class="select-list" id="select-list"></div>

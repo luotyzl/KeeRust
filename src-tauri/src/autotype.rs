@@ -209,7 +209,14 @@ pub fn capture_foreground() -> (isize, String, Option<String>) {
 
 // ── Keystroke injection ─────────────────────────────────────────────────────────
 
-/// Type `username {TAB} password {ENTER}` into whatever window currently has focus.
+/// What to type once the target window has focus.
+enum TypeJob {
+    /// `username {TAB} password {ENTER}` — KeeWeb's default sequence.
+    Full { username: String, password: String },
+    /// A single field's value, with no Tab/Enter (password-only, username-only, …).
+    Text(String),
+}
+
 fn type_credentials(username: &str, password: &str) -> Result<(), String> {
     use enigo::{Direction::Click, Enigo, Key, Keyboard, Settings};
 
@@ -225,16 +232,29 @@ fn type_credentials(username: &str, password: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Re-focus the captured target window, then type the credentials. Runs on a
+fn type_string(text: &str) -> Result<(), String> {
+    use enigo::{Enigo, Keyboard, Settings};
+
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    if !text.is_empty() {
+        enigo.text(text).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Re-focus the captured target window, then run the typing job. Runs on a
 /// blocking thread because enigo and the short settle delay both block.
-async fn focus_and_type(hwnd: Option<isize>, username: String, password: String) -> Result<(), String> {
+async fn focus_and_run(hwnd: Option<isize>, job: TypeJob) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         if let Some(h) = hwnd {
             win::focus(h);
         }
         // Give the OS a moment to hand focus back to the target window.
         std::thread::sleep(std::time::Duration::from_millis(220));
-        type_credentials(&username, &password)
+        match job {
+            TypeJob::Full { username, password } => type_credentials(&username, &password),
+            TypeJob::Text(s) => type_string(&s),
+        }
     })
     .await
     .map_err(|e| e.to_string())?
@@ -242,7 +262,7 @@ async fn focus_and_type(hwnd: Option<isize>, username: String, password: String)
 
 // ── Tauri commands ──────────────────────────────────────────────────────────────
 
-/// Auto-type a single, already-chosen entry into the captured target window.
+/// Auto-type a chosen entry's full sequence (username TAB password ENTER).
 #[tauri::command]
 pub async fn autotype_run(
     state: tauri::State<'_, AutotypeState>,
@@ -250,7 +270,18 @@ pub async fn autotype_run(
     password: String,
 ) -> Result<(), String> {
     let hwnd = *state.target_hwnd.lock().unwrap();
-    focus_and_type(hwnd, username, password).await
+    focus_and_run(hwnd, TypeJob::Full { username, password }).await
+}
+
+/// Type a single field's value into the target (password-only, username-only,
+/// a one-time code, or any custom field).
+#[tauri::command]
+pub async fn autotype_text(
+    state: tauri::State<'_, AutotypeState>,
+    text: String,
+) -> Result<(), String> {
+    let hwnd = *state.target_hwnd.lock().unwrap();
+    focus_and_run(hwnd, TypeJob::Text(text)).await
 }
 
 /// Show, unminimize, and focus the main window (bring it forward from the taskbar
