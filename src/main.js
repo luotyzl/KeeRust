@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let vaultData = null;
@@ -1114,28 +1113,25 @@ function entryAllUrls(e) {
   return urls;
 }
 
-// Port of KeeWeb SelectEntryFilter._getEntryRank
-function getEntryRank(e, windowInfo) {
-  const useTitle = !!windowInfo.title && !windowInfo.url;
-  const useUrl = !!windowInfo.url;
+// Port of KeeWeb SelectEntryFilter._getEntryRank — honors the filter's toggles.
+function rankEntry(e, f) {
   let titleRank = 0;
   let urlRank = 0;
 
-  if (useTitle && windowInfo.title && e.title) {
-    titleRank = getStringRank(e.title.toLowerCase(), windowInfo.title.toLowerCase());
+  if (f.useTitle && f.title && e.title) {
+    titleRank = getStringRank(e.title.toLowerCase(), f.title.toLowerCase());
     if (!titleRank) return 0;
   }
 
-  if (useUrl && windowInfo.url) {
-    const searchUrlLower = windowInfo.url.toLowerCase();
-    const searchParts = urlPartsRegex.exec(searchUrlLower);
+  if (f.useUrl && f.url) {
+    const searchParts = urlPartsRegex.exec(f.url.toLowerCase());
     if (searchParts) {
       const [, searchScheme, searchDomain, searchPath] = searchParts;
       for (const url of entryAllUrls(e)) {
         const parts = urlPartsRegex.exec(url.toLowerCase());
         if (!parts) continue;
         const [, scheme, domain, path] = parts;
-        if (domain === searchDomain || searchDomain.indexOf("." + domain) > 0) {
+        if (domain === searchDomain || (f.subdomains && searchDomain.indexOf("." + domain) > 0)) {
           urlRank += domain === searchDomain ? 20 : 10;
           if (path === searchPath) urlRank += 10;
           else if (path && searchPath) {
@@ -1148,18 +1144,32 @@ function getEntryRank(e, windowInfo) {
     }
   }
 
-  if (useTitle && !titleRank) return 0;
-  if (useUrl && !urlRank) return 0;
+  if (f.useTitle && !titleRank) return 0;
+  if (f.useUrl && !urlRank) return 0;
   return titleRank + urlRank;
 }
 
-function rankEntries(windowInfo) {
+// True if the free-text filter matches any searchable field (KeeWeb getEntriesByFilter).
+function entryMatchesText(e, t) {
+  if (!t) return true;
+  const parts = [e.title, e.username, e.url, e.notes, e.group_name];
+  for (const cf of e.custom_fields || []) parts.push(cf.name, cf.value);
+  return parts.filter(Boolean).join("\n").toLowerCase().includes(t);
+}
+
+// Apply a filter (text → rank by url/title) and return the matching entries.
+// Port of SelectEntryFilter.getEntries: when neither url nor title is active,
+// every (text-matching) entry qualifies.
+function filterGetEntries(f) {
   if (!vaultData) return [];
   const rbUuid = vaultData.recycle_bin_uuid;
-  return vaultData.entries
+  const t = (f.text || "").toLowerCase();
+  let list = vaultData.entries
     .filter((e) => e.group_uuid !== rbUuid) // never auto-type from the recycle bin
-    .map((e) => [e, getEntryRank(e, windowInfo)])
-    .filter(([, r]) => r > 0)
+    .filter((e) => entryMatchesText(e, t))
+    .map((e) => [e, rankEntry(e, f)]);
+  if (f.useUrl || f.useTitle) list = list.filter(([, r]) => r > 0);
+  return list
     .sort((a, b) => b[1] - a[1] || a[0].title.localeCompare(b[0].title))
     .map(([e]) => e);
 }
@@ -1173,44 +1183,143 @@ function buildWindowInfo(title, url) {
   return { title: title || "", url: url || null };
 }
 
-function toCandidate(e) {
+// Build the initial filter from the captured window (KeeWeb SelectEntryFilter ctor).
+function makeFilter(windowInfo) {
   return {
-    title: e.title || "",
-    username: e.username || "",
-    password: e.password || "",
-    url: e.url || "",
-    group: e.group_name || "",
+    title: windowInfo.title || "",
+    url: windowInfo.url || "",
+    useTitle: !!windowInfo.title && !windowInfo.url,
+    useUrl: !!windowInfo.url,
+    subdomains: true,
+    text: "",
   };
 }
 
-async function runAutotypeForWindow(title, url) {
-  const windowInfo = buildWindowInfo(title, url);
-  let matches = rankEntries(windowInfo);
-  // Matched by URL but found nothing → retry by title (KeeWeb's fallback).
-  if (matches.length === 0 && windowInfo.url) {
-    matches = rankEntries({ title: windowInfo.title, url: null });
+// Strip scheme / www. for compact display of the matched URL.
+function shortUrl(url) {
+  return url.replace(/^\w+:\/\//, "").replace(/^(?:www|wwws|secure)\./, "").replace(/\/$/, "");
+}
+
+// ── Auto-type select-entry view (shown in the main window) ──────────────────────
+let selectFilter = null;
+let selectEntries = [];
+let selectIndex = 0;
+
+function typeCreds(e) {
+  return invoke("autotype_run", { username: e.username || "", password: e.password || "" })
+    .catch((err) => showToast("Auto-type failed: " + String(err)));
+}
+
+function closeSelectView() {
+  selectFilter = null;
+  selectEntries = [];
+  selectIndex = 0;
+  show("screen-vault");
+}
+
+function updateSelectHighlight() {
+  const listEl = document.getElementById("select-list");
+  [...listEl.children].forEach((r, i) => r.classList.toggle("selected", i === selectIndex));
+  listEl.children[selectIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+// The 3 condition chips (Website / Subdomains / Title) + a live "Contains" chip.
+function buildFilterChips(f) {
+  const chips = [];
+  if (f.url) {
+    chips.push({ id: "url", label: "Website", text: shortUrl(f.url), active: f.useUrl });
+    chips.push({ id: "subdomains", label: "Subdomains", text: "", active: f.useUrl && f.subdomains });
+  }
+  if (f.title) {
+    chips.push({ id: "title", label: "Title", text: f.title, active: f.useTitle });
+  }
+  if (f.text) {
+    chips.push({ id: "text", label: "Contains", text: f.text, active: true });
+  }
+  return chips;
+}
+
+// Toggle a condition (port of SelectEntryView.filterClicked).
+function onFilterClick(id) {
+  const f = selectFilter;
+  if (id === "url") f.useUrl = !f.useUrl;
+  else if (id === "subdomains") {
+    const active = !(f.useUrl && f.subdomains);
+    f.subdomains = active;
+    if (active) f.useUrl = true;
+  } else if (id === "title") f.useTitle = !f.useTitle;
+  else if (id === "text") f.text = "";
+  renderSelectView();
+}
+
+function renderSelectView() {
+  const f = selectFilter;
+  selectEntries = filterGetEntries(f);
+  if (selectIndex >= selectEntries.length) selectIndex = 0;
+
+  const target = f.title || f.url;
+  document.getElementById("select-message").textContent = target
+    ? `Matched window: ${target}`
+    : "No window information — showing all entries";
+
+  const chipsEl = document.getElementById("select-filters");
+  chipsEl.innerHTML = "";
+  for (const chip of buildFilterChips(f)) {
+    const el = document.createElement("div");
+    el.className = "select-filter" + (chip.active ? " active" : "");
+    el.innerHTML =
+      `<span class="sf-check">${chip.active ? "☑" : "☐"}</span>` +
+      `<span class="sf-text">${escHtml(chip.label)}${chip.text ? ": " + escHtml(chip.text) : ""}</span>`;
+    el.addEventListener("click", () => onFilterClick(chip.id));
+    chipsEl.appendChild(el);
   }
 
-  if (matches.length === 0) {
-    await invoke("focus_main_window");
-    showToast("No matching entries for this window");
+  const listEl = document.getElementById("select-list");
+  listEl.innerHTML = "";
+  if (selectEntries.length === 0) {
+    listEl.innerHTML = `<div class="select-empty">No matching entries</div>`;
     return;
   }
+  selectEntries.forEach((e, i) => {
+    const row = document.createElement("div");
+    row.className = "select-item" + (i === selectIndex ? " selected" : "");
+    row.innerHTML =
+      `<div class="si-title">${escHtml(e.title || "(no title)")}</div>` +
+      `<div class="si-sub">${escHtml(e.username || "")}${e.group_name ? " · " + escHtml(e.group_name) : ""}</div>`;
+    row.addEventListener("click", () => { closeSelectView(); typeCreds(e); });
+    row.addEventListener("mousemove", () => { if (selectIndex !== i) { selectIndex = i; updateSelectHighlight(); } });
+    listEl.appendChild(row);
+  });
+}
+
+async function openSelectView(filter) {
+  selectFilter = filter;
+  selectIndex = 0;
+  await invoke("focus_main_window"); // bring the app forward from the taskbar
+  renderSelectView();
+  show("screen-select");
+}
+
+async function runAutotypeForWindow(title, url) {
+  const filter = makeFilter(buildWindowInfo(title, url));
+  let matches = filterGetEntries(filter);
+
+  // Exactly one match → type it straight away (KeeWeb directAutotype).
   if (matches.length === 1) {
-    const c = toCandidate(matches[0]);
-    try {
-      await invoke("autotype_run", { username: c.username, password: c.password });
-    } catch (err) {
-      showToast("Auto-type failed: " + String(err));
-    }
+    await typeCreds(matches[0]);
     return;
   }
-  // Multiple matches → let the user choose in a separate window.
-  try {
-    await invoke("open_autotype_selector", { candidates: matches.map(toCandidate) });
-  } catch (err) {
-    showToast("Auto-type failed: " + String(err));
+  // No match → relax url→title so the select view opens with candidates to choose
+  // from (KeeWeb processEventWithFilter fallback). With both off, all entries show.
+  if (matches.length === 0) {
+    if (filter.useUrl) {
+      filter.useUrl = false;
+      if (filter.title) filter.useTitle = true;
+    }
+    matches = filterGetEntries(filter);
+    if (matches.length === 0 && filter.useTitle) filter.useTitle = false;
   }
+  await openSelectView(filter);
 }
 
 async function handleAutoType(title, url) {
@@ -1225,57 +1334,35 @@ async function handleAutoType(title, url) {
   await runAutotypeForWindow(title, url);
 }
 
-// ── Auto-type selector window ───────────────────────────────────────────────────
-async function initAutotypeSelector() {
-  document.querySelectorAll(".screen").forEach((s) => { s.style.display = "none"; });
-  const screen = document.getElementById("autotype-screen");
-  screen.classList.remove("hidden");
-
-  const listEl = document.getElementById("autotype-list");
-  let candidates = [];
-  try { candidates = await invoke("get_autotype_candidates"); } catch {}
-  document.getElementById("autotype-target").textContent =
-    `${candidates.length} matching entries`;
-
-  let selected = 0;
-
-  function updateSel() {
-    [...listEl.children].forEach((r, i) => r.classList.toggle("selected", i === selected));
-    listEl.children[selected]?.scrollIntoView({ block: "nearest" });
+// Select-view keyboard handling: navigate, pick, cancel, and type-to-filter.
+document.addEventListener("keydown", (e) => {
+  if (!document.getElementById("screen-select").classList.contains("active")) return;
+  if (e.key === "ArrowDown") {
+    selectIndex = Math.min(selectIndex + 1, selectEntries.length - 1);
+    updateSelectHighlight();
+    e.preventDefault();
+  } else if (e.key === "ArrowUp") {
+    selectIndex = Math.max(selectIndex - 1, 0);
+    updateSelectHighlight();
+    e.preventDefault();
+  } else if (e.key === "Enter") {
+    const en = selectEntries[selectIndex];
+    if (en) { closeSelectView(); typeCreds(en); }
+    e.preventDefault();
+  } else if (e.key === "Escape") {
+    closeSelectView();
+    e.preventDefault();
+  } else if (e.key === "Backspace") {
+    if (selectFilter.text) { selectFilter.text = selectFilter.text.slice(0, -1); renderSelectView(); }
+    e.preventDefault();
+  } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    selectFilter.text += e.key;
+    renderSelectView();
+    e.preventDefault();
   }
-  async function pick(i) {
-    try { await invoke("autotype_pick", { index: i }); } catch {}
-  }
-  async function cancel() {
-    try { await invoke("close_autotype_selector"); } catch {}
-  }
+});
 
-  candidates.forEach((c, i) => {
-    const row = document.createElement("div");
-    row.className = "autotype-item" + (i === 0 ? " selected" : "");
-    row.innerHTML =
-      `<div class="at-title">${escHtml(c.title || "(no title)")}</div>` +
-      `<div class="at-sub">${escHtml(c.username || "")}${c.group ? " · " + escHtml(c.group) : ""}</div>`;
-    row.addEventListener("click", () => pick(i));
-    row.addEventListener("mousemove", () => { if (selected !== i) { selected = i; updateSel(); } });
-    listEl.appendChild(row);
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") { selected = Math.min(selected + 1, candidates.length - 1); updateSel(); e.preventDefault(); }
-    else if (e.key === "ArrowUp") { selected = Math.max(selected - 1, 0); updateSel(); e.preventDefault(); }
-    else if (e.key === "Enter") { pick(selected); e.preventDefault(); }
-    else if (e.key === "Escape") { cancel(); e.preventDefault(); }
-  });
-
-  const win = getCurrentWindow();
-  win.setFocus().catch(() => {});
-  // Cancel if the window loses focus (clicked away). Delay so the initial focus
-  // settle doesn't immediately trigger a cancel.
-  setTimeout(() => {
-    win.onFocusChanged(({ payload: focused }) => { if (!focused) cancel(); });
-  }, 500);
-}
+document.getElementById("select-cancel").addEventListener("click", closeSelectView);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -1529,9 +1616,4 @@ document.getElementById("btn-change-config").addEventListener("click", () => {
   document.getElementById("btn-pick-local").focus();
 });
 
-// The selector window loads this same page with a query flag; render only it.
-if (new URLSearchParams(location.search).get("view") === "autotype-select") {
-  initAutotypeSelector();
-} else {
-  init();
-}
+init();

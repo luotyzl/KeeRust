@@ -62,10 +62,6 @@ pub fn run() {
             vault::get_entry_xml,
             favicon::fetch_favicon,
             autotype::autotype_run,
-            autotype::open_autotype_selector,
-            autotype::get_autotype_candidates,
-            autotype::autotype_pick,
-            autotype::close_autotype_selector,
             autotype::focus_main_window,
         ])
         .run(tauri::generate_context!())

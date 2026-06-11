@@ -2,26 +2,14 @@
 //! inject `username {TAB} password {ENTER}` into the target app — mirroring
 //! KeeWeb's default auto-type sequence and select-entry flow.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager};
 
-/// Shared state: the window that had focus when the hotkey fired, and the list
-/// of candidate entries currently offered in the selector window.
+/// Shared state: the window that had focus when the auto-type hotkey fired.
 #[derive(Default)]
 pub struct AutotypeState {
     pub target_hwnd: Mutex<Option<isize>>,
-    pub candidates: Mutex<Vec<Candidate>>,
-}
-
-/// One entry the user can auto-type. Passwords stay in memory only.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Candidate {
-    pub title: String,
-    pub username: String,
-    pub password: String,
-    pub url: String,
-    pub group: String,
 }
 
 /// Payload emitted to the frontend when the auto-type hotkey is pressed.
@@ -265,70 +253,8 @@ pub async fn autotype_run(
     focus_and_type(hwnd, username, password).await
 }
 
-/// Bring up a separate window so the user can choose among multiple matches.
-#[tauri::command]
-pub async fn open_autotype_selector(
-    app: AppHandle,
-    state: tauri::State<'_, AutotypeState>,
-    candidates: Vec<Candidate>,
-) -> Result<(), String> {
-    *state.candidates.lock().unwrap() = candidates;
-
-    if let Some(w) = app.get_webview_window("autotype-select") {
-        let _ = w.close();
-    }
-    WebviewWindowBuilder::new(
-        &app,
-        "autotype-select",
-        WebviewUrl::App("index.html?view=autotype-select".into()),
-    )
-    .title("KeeRust — Choose entry to auto-type")
-    .inner_size(440.0, 520.0)
-    .resizable(false)
-    .always_on_top(true)
-    .center()
-    .focused(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Fetch the candidate list (called by the selector window on load).
-#[tauri::command]
-pub fn get_autotype_candidates(state: tauri::State<'_, AutotypeState>) -> Vec<Candidate> {
-    state.candidates.lock().unwrap().clone()
-}
-
-/// The user picked candidate `index` in the selector window: close it, restore
-/// focus to the target, and type that entry's credentials.
-#[tauri::command]
-pub async fn autotype_pick(
-    app: AppHandle,
-    state: tauri::State<'_, AutotypeState>,
-    index: usize,
-) -> Result<(), String> {
-    let cand = state.candidates.lock().unwrap().get(index).cloned();
-    let hwnd = *state.target_hwnd.lock().unwrap();
-
-    if let Some(w) = app.get_webview_window("autotype-select") {
-        let _ = w.close();
-    }
-
-    let Some(c) = cand else {
-        return Err("Invalid selection".into());
-    };
-    focus_and_type(hwnd, c.username, c.password).await
-}
-
-/// Close the selector window without typing anything.
-#[tauri::command]
-pub fn close_autotype_selector(app: AppHandle) {
-    if let Some(w) = app.get_webview_window("autotype-select") {
-        let _ = w.close();
-    }
-}
-
-/// Show, unminimize, and focus the main window (used by the unlock-then-continue flow).
+/// Show, unminimize, and focus the main window (bring it forward from the taskbar
+/// for the select-entry view / unlock-then-continue flow).
 #[tauri::command]
 pub fn focus_main_window(app: AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
