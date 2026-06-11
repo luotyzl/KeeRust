@@ -63,6 +63,7 @@ pub fn run() {
             favicon::fetch_favicon,
             autotype::autotype_run,
             autotype::autotype_text,
+            autotype::autotype_sequence,
             autotype::focus_main_window,
         ])
         .run(tauri::generate_context!())

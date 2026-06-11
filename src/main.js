@@ -587,6 +587,7 @@ function renderEditForm(entry) {
     title: "", username: "", password: "", url: "", notes: "",
     otp_uri: null, custom_fields: [],
     icon_id: 0, custom_icon_base64: null,
+    autotype_enabled: true, autotype_sequence: "", autotype_obfuscation: false,
   };
 
   // Currently chosen icon: built-in index, or -1 to keep an existing custom icon
@@ -665,6 +666,27 @@ function renderEditForm(entry) {
         <button class="icon-btn" id="edit-add-cf">+ Add Field</button>
       </div>
       <div id="edit-cf-container">${cfHtml}</div>
+
+      <div class="edit-section-header">Auto-Type</div>
+      <label class="edit-checkbox-row">
+        <input type="checkbox" id="edit-at-enabled" ${e.autotype_enabled !== false ? "checked" : ""} />
+        Enable auto-type for this entry
+      </label>
+      <div class="edit-field-group">
+        <label class="edit-label">Keystrokes</label>
+        <div class="edit-field-row">
+          <input class="edit-input" id="edit-at-seq" value="${escAttr(e.autotype_sequence || "")}"
+                 placeholder="${escAttr(DEFAULT_AT_SEQUENCE)}" autocomplete="off" />
+        </div>
+        <div class="edit-at-hint">
+          Fields: {USERNAME} {PASSWORD} {TOTP} {URL} {TITLE} {NOTES} {S:FieldName} ·
+          keys: {TAB} {ENTER} {SPACE} {DELAY=ms} {UP}… · modifiers: + ^ % (shift/ctrl/alt). Empty = default.
+        </div>
+      </div>
+      <label class="edit-checkbox-row">
+        <input type="checkbox" id="edit-at-obf" ${e.autotype_obfuscation ? "checked" : ""} />
+        Mix real keystrokes with random
+      </label>
 
       <div class="edit-actions">
         <button class="btn-save-entry" id="edit-save">Save</button>
@@ -782,6 +804,9 @@ function renderEditForm(entry) {
       custom_fields: customFields,
       icon_id: selectedIconId, // -1 keeps an existing custom icon untouched
       custom_icon_base64: pendingCustomIcon, // set only when a favicon was just downloaded
+      autotype_enabled: el.querySelector("#edit-at-enabled").checked,
+      autotype_sequence: el.querySelector("#edit-at-seq").value.trim(),
+      autotype_obfuscation: el.querySelector("#edit-at-obf").checked,
     };
 
     const saveBtn = el.querySelector("#edit-save");
@@ -1166,6 +1191,7 @@ function filterGetEntries(f) {
   const t = (f.text || "").toLowerCase();
   let list = vaultData.entries
     .filter((e) => e.group_uuid !== rbUuid) // never auto-type from the recycle bin
+    .filter((e) => e.autotype_enabled !== false) // skip entries with auto-type disabled
     .filter((e) => entryMatchesText(e, t))
     .map((e) => [e, rankEntry(e, f)]);
   if (f.useUrl || f.useTitle) list = list.filter(([, r]) => r > 0);
@@ -1205,9 +1231,121 @@ let selectFilter = null;
 let selectEntries = [];
 let selectIndex = 0;
 
-function typeCreds(e) {
-  return invoke("autotype_run", { username: e.username || "", password: e.password || "" })
-    .catch((err) => showToast("Auto-type failed: " + String(err)));
+// ── Auto-type keystroke sequence (KeeWeb grammar) ───────────────────────────────
+const DEFAULT_AT_SEQUENCE = "{USERNAME}{TAB}{PASSWORD}{ENTER}";
+
+// Named keys → canonical names understood by the Rust executor.
+const AT_KEYS = {
+  tab: "tab", enter: "enter", space: "space",
+  up: "up", down: "down", left: "left", right: "right",
+  home: "home", end: "end", pgup: "pageup", pgdn: "pagedown",
+  insert: "insert", ins: "insert", delete: "delete", del: "delete",
+  backspace: "backspace", bs: "backspace", bksp: "backspace", esc: "escape",
+  add: "add", subtract: "subtract", multiply: "multiply", divide: "divide",
+  numpad0: "num0", numpad1: "num1", numpad2: "num2", numpad3: "num3", numpad4: "num4",
+  numpad5: "num5", numpad6: "num6", numpad7: "num7", numpad8: "num8", numpad9: "num9",
+};
+for (let i = 1; i <= 16; i++) AT_KEYS["f" + i] = "f" + i;
+
+function entryFieldValue(entry, name) {
+  switch ((name || "").toLowerCase()) {
+    case "title": return entry.title || "";
+    case "username": return entry.username || "";
+    case "url": return entry.url || "";
+    case "password": return entry.password || "";
+    case "notes": return entry.notes || "";
+    case "group": return entry.group_name || "";
+    default: {
+      const cf = (entry.custom_fields || []).find(
+        (f) => f.name.toLowerCase() === (name || "").toLowerCase()
+      );
+      return cf ? cf.value : "";
+    }
+  }
+}
+
+// Text with no modifiers → fast text action; with modifiers → one key per char.
+function pushTextWithMods(actions, text, mods) {
+  if (!text) return;
+  if (!mods || mods.length === 0) actions.push({ type: "text", value: text });
+  else for (const ch of text) actions.push({ type: "key", key: ch, mods });
+}
+
+async function applyAtOp(actions, contents, mods, entry) {
+  const m = contents.match(/^(.*?)(?:([\s:=])[\s:=]*(.*))?$/);
+  const op = (m[1] || "").toLowerCase();
+  const arg = m[3];
+
+  if (["title", "username", "url", "password", "notes", "group"].includes(op)) {
+    pushTextWithMods(actions, entryFieldValue(entry, op), mods);
+  } else if (op === "s") {
+    pushTextWithMods(actions, entryFieldValue(entry, arg || ""), mods);
+  } else if (op === "totp") {
+    let code = "";
+    if (entry.otp_uri) {
+      const p = parseOtpUri(entry.otp_uri);
+      code = (await computeTOTP(p.secret, p.period, p.digits, p.algorithm)) || "";
+    }
+    pushTextWithMods(actions, code, mods);
+  } else if (op === "delay") {
+    const ms = parseInt(arg || "0", 10);
+    if (ms > 0) actions.push({ type: "delay", ms });
+  } else if (op === "clearfield") {
+    actions.push({ type: "key", key: "a", mods: ["ctrl"] });
+    actions.push({ type: "key", key: "delete", mods: [] });
+  } else if (AT_KEYS[op]) {
+    actions.push({ type: "key", key: AT_KEYS[op], mods });
+  }
+  // Unknown ops are ignored (lenient).
+}
+
+// Parse a KeeWeb keystroke sequence into a flat action list, resolving entry fields.
+async function buildAutoTypeActions(sequence, entry) {
+  const actions = [];
+  const s = sequence || "";
+  const n = s.length;
+  let i = 0;
+  let mods = [];
+  const groupStack = [];
+  const takeMods = () => { const m = [...groupStack.flat(), ...mods]; mods = []; return m; };
+
+  while (i < n) {
+    const ch = s[i];
+    if (ch === "{") {
+      const end = s.indexOf("}", i + 2); // +2 so {}} reads the literal '}'
+      if (end < 0) throw "Mismatched '{' in sequence";
+      const contents = s.substring(i + 1, end);
+      i = end + 1;
+      if (contents.length === 1) pushTextWithMods(actions, contents, takeMods());
+      else await applyAtOp(actions, contents, takeMods(), entry);
+    } else if (ch === "+" || ch === "^" || ch === "%") {
+      mods.push(ch === "+" ? "shift" : ch === "^" ? "ctrl" : "alt");
+      i++;
+    } else if (ch === "(") {
+      groupStack.push([...mods]); mods = []; i++;
+    } else if (ch === ")") {
+      if (!groupStack.length) throw "Unexpected ')' in sequence";
+      groupStack.pop(); i++;
+    } else if (ch === "~") {
+      actions.push({ type: "key", key: "enter", mods: takeMods() }); i++;
+    } else if (ch === " ") {
+      i++; // KeeWeb ignores spaces
+    } else {
+      pushTextWithMods(actions, ch, takeMods()); i++;
+    }
+  }
+  return actions;
+}
+
+// Auto-type the entry's full sequence (its custom one, or the global default).
+async function typeCreds(e) {
+  const seq = (e.autotype_sequence && e.autotype_sequence.trim()) || DEFAULT_AT_SEQUENCE;
+  try {
+    const actions = await buildAutoTypeActions(seq, e);
+    await invoke("autotype_sequence", { actions });
+  } catch (err) {
+    showToast("Auto-type failed: " + String(err));
+  }
 }
 
 // Type a single field's value into the target window.

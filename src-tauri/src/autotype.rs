@@ -2,7 +2,7 @@
 //! inject `username {TAB} password {ENTER}` into the target app — mirroring
 //! KeeWeb's default auto-type sequence and select-entry flow.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
@@ -17,6 +17,23 @@ pub struct AutotypeState {
 pub struct AutoTypeTrigger {
     pub title: String,
     pub url: Option<String>,
+}
+
+/// One primitive auto-type step. The frontend parses a KeeWeb keystroke sequence
+/// (resolving entry fields / TOTP) into a list of these; Rust just executes them.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Action {
+    /// Type a literal string (fast unicode path).
+    Text { value: String },
+    /// Press a key (named, e.g. "enter", or a single character) with modifiers held.
+    Key {
+        key: String,
+        #[serde(default)]
+        mods: Vec<String>,
+    },
+    /// Pause for `ms` milliseconds.
+    Delay { ms: u64 },
 }
 
 // ── Win32 glue (foreground window + focus) ──────────────────────────────────────
@@ -215,6 +232,115 @@ enum TypeJob {
     Full { username: String, password: String },
     /// A single field's value, with no Tab/Enter (password-only, username-only, …).
     Text(String),
+    /// A parsed keystroke sequence (custom per-entry auto-type).
+    Sequence(Vec<Action>),
+}
+
+/// Map a key name (or single character) to an enigo key.
+fn map_key(name: &str) -> Option<enigo::Key> {
+    use enigo::Key;
+    let k = match name {
+        "tab" => Key::Tab,
+        "enter" => Key::Return,
+        "space" => Key::Space,
+        "up" => Key::UpArrow,
+        "down" => Key::DownArrow,
+        "left" => Key::LeftArrow,
+        "right" => Key::RightArrow,
+        "home" => Key::Home,
+        "end" => Key::End,
+        "pageup" => Key::PageUp,
+        "pagedown" => Key::PageDown,
+        "insert" => Key::Insert,
+        "delete" => Key::Delete,
+        "backspace" => Key::Backspace,
+        "escape" => Key::Escape,
+        "add" => Key::Add,
+        "subtract" => Key::Subtract,
+        "multiply" => Key::Multiply,
+        "divide" => Key::Divide,
+        "num0" => Key::Numpad0,
+        "num1" => Key::Numpad1,
+        "num2" => Key::Numpad2,
+        "num3" => Key::Numpad3,
+        "num4" => Key::Numpad4,
+        "num5" => Key::Numpad5,
+        "num6" => Key::Numpad6,
+        "num7" => Key::Numpad7,
+        "num8" => Key::Numpad8,
+        "num9" => Key::Numpad9,
+        "f1" => Key::F1,
+        "f2" => Key::F2,
+        "f3" => Key::F3,
+        "f4" => Key::F4,
+        "f5" => Key::F5,
+        "f6" => Key::F6,
+        "f7" => Key::F7,
+        "f8" => Key::F8,
+        "f9" => Key::F9,
+        "f10" => Key::F10,
+        "f11" => Key::F11,
+        "f12" => Key::F12,
+        "f13" => Key::F13,
+        "f14" => Key::F14,
+        "f15" => Key::F15,
+        "f16" => Key::F16,
+        other => {
+            // A single character → press that key.
+            let mut chars = other.chars();
+            let c = chars.next()?;
+            if chars.next().is_some() {
+                return None; // unknown multi-char key name
+            }
+            Key::Unicode(c)
+        }
+    };
+    Some(k)
+}
+
+fn mod_key(name: &str) -> Option<enigo::Key> {
+    use enigo::Key;
+    match name {
+        "ctrl" => Some(Key::Control),
+        "shift" => Some(Key::Shift),
+        "alt" => Some(Key::Alt),
+        "win" => Some(Key::Meta),
+        _ => None,
+    }
+}
+
+fn run_actions(actions: &[Action]) -> Result<(), String> {
+    use enigo::{
+        Direction::{Click, Press, Release},
+        Enigo, Keyboard, Settings,
+    };
+
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    for action in actions {
+        match action {
+            Action::Text { value } => {
+                if !value.is_empty() {
+                    enigo.text(value).map_err(|e| e.to_string())?;
+                }
+            }
+            Action::Delay { ms } => {
+                std::thread::sleep(std::time::Duration::from_millis(*ms));
+            }
+            Action::Key { key, mods } => {
+                let Some(k) = map_key(key) else { continue };
+                let modkeys: Vec<_> = mods.iter().filter_map(|m| mod_key(m)).collect();
+                for mk in &modkeys {
+                    enigo.key(*mk, Press).map_err(|e| e.to_string())?;
+                }
+                let res = enigo.key(k, Click);
+                for mk in modkeys.iter().rev() {
+                    let _ = enigo.key(*mk, Release);
+                }
+                res.map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn type_credentials(username: &str, password: &str) -> Result<(), String> {
@@ -254,6 +380,7 @@ async fn focus_and_run(hwnd: Option<isize>, job: TypeJob) -> Result<(), String> 
         match job {
             TypeJob::Full { username, password } => type_credentials(&username, &password),
             TypeJob::Text(s) => type_string(&s),
+            TypeJob::Sequence(actions) => run_actions(&actions),
         }
     })
     .await
@@ -282,6 +409,16 @@ pub async fn autotype_text(
 ) -> Result<(), String> {
     let hwnd = *state.target_hwnd.lock().unwrap();
     focus_and_run(hwnd, TypeJob::Text(text)).await
+}
+
+/// Run a parsed keystroke sequence (the entry's custom auto-type pattern).
+#[tauri::command]
+pub async fn autotype_sequence(
+    state: tauri::State<'_, AutotypeState>,
+    actions: Vec<Action>,
+) -> Result<(), String> {
+    let hwnd = *state.target_hwnd.lock().unwrap();
+    focus_and_run(hwnd, TypeJob::Sequence(actions)).await
 }
 
 /// Show, unminimize, and focus the main window (bring it forward from the taskbar
