@@ -575,6 +575,73 @@ async function showEntryXml(e) {
 }
 
 // ── Edit form ─────────────────────────────────────────────────────────────────
+// ── Keystrokes field helper popup (KeeWeb auto-type hint) ───────────────────────
+const AT_FIELD_TOKENS = [
+  "{TITLE}", "{USERNAME}", "{URL}", "{PASSWORD}", "{NOTES}", "{GROUP}",
+  "{TOTP}", "{S:Custom Field Name}",
+];
+const AT_MOD_TOKENS = [
+  { label: "+ (shift)", ins: "+" },
+  { label: "% (alt)", ins: "%" },
+  { label: "^ (ctrl)", ins: "^" },
+];
+const AT_KEY_TOKENS = [
+  "{TAB}", "{ENTER}", "{SPACE}", "{DELAY=ms}","{UP}", "{DOWN}", "{LEFT}", "{RIGHT}", "{HOME}", "{END}",
+  "{+}", "{%}", "{^}", "{~}", "{(}", "{)}", "{[}", "{]}", "{{}", "{}}",
+];
+
+function insertAtCursor(input, text) {
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  const pos = start + text.length;
+  input.selectionStart = input.selectionEnd = pos;
+  input.focus();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// Show a clickable token popup under the keystrokes input (insert at cursor).
+function wireKeystrokeHelper(input) {
+  const wrap = input?.closest(".at-seq-wrap");
+  if (!wrap) return;
+  let helper = null;
+
+  const tokenLink = (tok) => `<a data-token="${escAttr(tok)}">${escHtml(tok)}</a>`;
+
+  function build() {
+    const h = document.createElement("div");
+    h.className = "at-helper";
+    h.innerHTML =
+      `<div class="at-helper-block">
+        <div class="at-helper-head"><span>Entry fields:</span>` +
+        `<a class="at-helper-more" href="https://keepass.info/help/base/autotype.html" target="_blank" rel="noreferrer">more…</a></div>
+        <div class="at-helper-tokens">${AT_FIELD_TOKENS.map(tokenLink).join("")}</div>
+      </div>` +
+      `<div class="at-helper-block">
+        <div class="at-helper-head"><span>Modifier keys:</span></div>
+        <div class="at-helper-tokens">${AT_MOD_TOKENS.map((m) => `<a data-token="${escAttr(m.ins)}">${escHtml(m.label)}</a>`).join("")}</div>
+      </div>` +
+      `<div class="at-helper-block">
+        <div class="at-helper-head"><span>Keys:</span></div>
+        <div class="at-helper-tokens">${AT_KEY_TOKENS.map(tokenLink).join("")}</div>
+      </div>`;
+    // Use mousedown + preventDefault so clicking a token doesn't blur the input.
+    h.addEventListener("mousedown", (ev) => {
+      const a = ev.target.closest("a[data-token]");
+      if (!a) return; // let the "more…" link behave normally
+      ev.preventDefault();
+      insertAtCursor(input, a.dataset.token);
+    });
+    return h;
+  }
+
+  function showHelper() { if (!helper) { helper = build(); wrap.appendChild(helper); } }
+  function hideHelper() { if (helper) { helper.remove(); helper = null; } }
+
+  input.addEventListener("focus", showHelper);
+  input.addEventListener("blur", () => setTimeout(hideHelper, 150));
+}
+
 function renderEditForm(entry) {
   stopOtpTimers();
   editMode = true;
@@ -674,14 +741,11 @@ function renderEditForm(entry) {
       </label>
       <div class="edit-field-group">
         <label class="edit-label">Keystrokes</label>
-        <div class="edit-field-row">
+        <div class="edit-field-row at-seq-wrap">
           <input class="edit-input" id="edit-at-seq" value="${escAttr(e.autotype_sequence || "")}"
                  placeholder="${escAttr(DEFAULT_AT_SEQUENCE)}" autocomplete="off" />
         </div>
-        <div class="edit-at-hint">
-          Fields: {USERNAME} {PASSWORD} {TOTP} {URL} {TITLE} {NOTES} {S:FieldName} ·
-          keys: {TAB} {ENTER} {SPACE} {DELAY=ms} {UP}… · modifiers: + ^ % (shift/ctrl/alt). Empty = default.
-        </div>
+        <div class="edit-at-hint">Click the field to insert fields, modifiers and keys. Empty = default sequence.</div>
       </div>
       <label class="edit-checkbox-row">
         <input type="checkbox" id="edit-at-obf" ${e.autotype_obfuscation ? "checked" : ""} />
@@ -772,6 +836,9 @@ function renderEditForm(entry) {
       ev.target.closest(".edit-cf-row").remove();
     }
   });
+
+  // Keystrokes field: clickable token popup on focus
+  wireKeystrokeHelper(el.querySelector("#edit-at-seq"));
 
   // Cancel
   el.querySelector("#edit-cancel").addEventListener("click", () => {

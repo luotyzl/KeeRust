@@ -536,6 +536,29 @@
         font-size: 0.68rem; color: #475569; margin-top: 0.4rem; line-height: 1.55;
         font-family: ui-monospace, 'Cascadia Code', monospace;
       }
+      /* Keystrokes field token-picker popup */
+      .at-seq-wrap { position: relative; }
+      .at-helper {
+        position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 50;
+        background: #1a1f2e; border: 1px solid #2d3748; border-radius: 8px;
+        padding: 0.6rem 0.7rem; box-shadow: 0 12px 30px rgba(0,0,0,0.55);
+        max-height: 300px; overflow-y: auto;
+      }
+      .at-helper-block { margin-bottom: 0.65rem; }
+      .at-helper-block:last-child { margin-bottom: 0; }
+      .at-helper-head {
+        display: flex; justify-content: space-between; align-items: baseline;
+        font-size: 0.72rem; color: #64748b; margin-bottom: 0.3rem;
+      }
+      .at-helper-more { color: #4a90e2; text-decoration: none; font-size: 0.72rem; }
+      .at-helper-more:hover { text-decoration: underline; }
+      .at-helper-tokens { display: flex; flex-wrap: wrap; gap: 0.3rem 0.5rem; }
+      .at-helper-tokens a {
+        color: #93c5fd; font-size: 0.76rem; cursor: pointer; white-space: nowrap;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        padding: 0.05rem 0.2rem; border-radius: 4px;
+      }
+      .at-helper-tokens a:hover { background: #1e3a5f; color: #cfe0ff; }
       .edit-label {
         font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
         letter-spacing: 0.07em; color: #4a5568; margin-bottom: 0.3rem;
