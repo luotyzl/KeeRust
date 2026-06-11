@@ -186,6 +186,98 @@ fn get_field(entry: &keepass::db::Entry, key: &str) -> String {
     entry.fields.get(key).map(field_str).unwrap_or_default()
 }
 
+/// Look up a field by a case-insensitive name (KeeWeb matches `otp` exactly, but
+/// being lenient avoids missing `OTP`/`Otp` variants written by other apps).
+fn find_field_ci(entry: &keepass::db::Entry, name: &str) -> Option<String> {
+    entry
+        .fields
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| field_str(v))
+}
+
+/// True if `s` is a bare RFC-4648 base32 secret (letters + digits 2-7, no
+/// padding) — mirrors KeeWeb's `Otp.isSecret`.
+fn is_base32_secret(s: &str) -> bool {
+    let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphabetic() || matches!(c, '2'..='7'))
+}
+
+fn make_otp_url(secret: &str, period: Option<&str>, digits: Option<&str>) -> String {
+    let mut url = format!("otpauth://totp/default?secret={secret}");
+    if let Some(p) = period {
+        url.push_str("&period=");
+        url.push_str(p);
+    }
+    if let Some(d) = digits {
+        url.push_str("&digits=");
+        url.push_str(d);
+    }
+    url
+}
+
+/// Resolve an entry's TOTP into a canonical `otpauth://` URL, handling the same
+/// storage variants KeeWeb does (see entry-model.js `initOtpGenerator`):
+///   1. `otp` field holding an `otpauth://` URL  → used as-is
+///   2. `otp` field holding a bare base32 secret → wrapped into a URL
+///   3. `otp` field in KeeOTP format `key=…&step=…&size=…`
+///   4. TrayTOTP plugin fields `TOTP Seed` (+ `TOTP Settings` = "period;digits")
+fn resolve_otp_uri(entry: &keepass::db::Entry) -> Option<String> {
+    if let Some(raw) = find_field_ci(entry, "otp") {
+        let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+
+        if raw.trim_start().to_lowercase().starts_with("otpauth:") {
+            return Some(raw);
+        }
+        if is_base32_secret(&compact) {
+            return Some(make_otp_url(&compact.to_uppercase(), None, None));
+        }
+        // KeeOTP plugin format: key=SECRET&step=30&size=6
+        if compact.contains("key=") {
+            let (mut key, mut step, mut size) = (None, None, None);
+            for part in compact.split('&') {
+                if let Some((k, v)) = part.split_once('=') {
+                    match k {
+                        "key" => key = Some(v.to_string()),
+                        "step" => step = Some(v.to_string()),
+                        "size" => size = Some(v.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(k) = key {
+                return Some(make_otp_url(&k, step.as_deref(), size.as_deref()));
+            }
+        }
+        // Unknown format — hand back the raw value as a last resort.
+        return Some(raw);
+    }
+
+    // TrayTOTP plugin: "TOTP Seed" + optional "TOTP Settings" ("period;digits").
+    if let Some(seed) = find_field_ci(entry, "TOTP Seed") {
+        let secret = seed.trim().to_string();
+        if !secret.is_empty() {
+            let (mut period, mut digits) = (None, None);
+            if let Some(settings) = find_field_ci(entry, "TOTP Settings") {
+                let parts: Vec<&str> = settings.split(';').collect();
+                if let Some(p) = parts.first().map(|s| s.trim()) {
+                    if p.parse::<u64>().map(|n| n > 0).unwrap_or(false) {
+                        period = Some(p.to_string());
+                    }
+                }
+                if let Some(d) = parts.get(1).map(|s| s.trim()) {
+                    if d.parse::<u64>().map(|n| n > 0).unwrap_or(false) {
+                        digits = Some(d.to_string());
+                    }
+                }
+            }
+            return Some(make_otp_url(&secret, period.as_deref(), digits.as_deref()));
+        }
+    }
+
+    None
+}
+
 fn attachment_bytes(att: &keepass::db::Attachment) -> Vec<u8> {
     match &att.data {
         keepass::db::Value::Unprotected(data) => data.clone(),
@@ -251,8 +343,9 @@ fn entry_to_data(
         .iter()
         .filter(|(k, _)| !STANDARD_FIELDS.contains(&k.as_str()))
         .filter(|(k, _)| {
-            let k = k.as_str();
-            k != "otp" && !k.starts_with("TOTP") && !k.starts_with("HmacOtp")
+            // Hide the raw TOTP source fields; they surface as the computed code.
+            let kl = k.to_lowercase();
+            kl != "otp" && !kl.starts_with("totp") && !kl.starts_with("hmacotp")
         })
         .map(|(k, v)| CustomField {
             name: k.clone(),
@@ -262,7 +355,7 @@ fn entry_to_data(
         .collect();
     custom_fields.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let otp_uri = entry.get_raw_otp_value().map(|s| s.to_string());
+    let otp_uri = resolve_otp_uri(entry);
 
     let history: Vec<HistoryEntry> = entry
         .history
@@ -599,6 +692,94 @@ pub async fn force_sync(
 
     let db = open_db(&bytes, &password)?;
     Ok(build_vault_data(db))
+}
+
+// ── Raw entry XML ─────────────────────────────────────────────────────────────
+
+/// Pull the `<Entry>…</Entry>` block whose `<UUID>` matches `uuid_b64` out of the
+/// full database XML, including its nested `<History>` entries. The current
+/// entry's own UUID appears before its history, so the first match's enclosing
+/// `<Entry>` is the outer (current) entry.
+fn extract_entry_xml(full_xml: &str, uuid_b64: &str) -> Option<String> {
+    let needle = format!("<UUID>{uuid_b64}</UUID>");
+    let uuid_pos = full_xml.find(&needle)?;
+    let start = full_xml[..uuid_pos].rfind("<Entry>")?;
+
+    // Walk forward, balancing nested <Entry>/</Entry> (History holds child entries).
+    let mut idx = start;
+    let mut depth: i32 = 0;
+    loop {
+        let next_open = full_xml[idx..].find("<Entry>").map(|p| idx + p);
+        let next_close = full_xml[idx..].find("</Entry>").map(|p| idx + p);
+        match (next_open, next_close) {
+            (Some(o), Some(c)) if o < c => {
+                depth += 1;
+                idx = o + "<Entry>".len();
+            }
+            (_, Some(c)) => {
+                depth -= 1;
+                idx = c + "</Entry>".len();
+                if depth == 0 {
+                    return Some(full_xml[start..idx].to_string());
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Re-indent a flat XML fragment for readable display. Text content has its `<`
+/// and `>` escaped, so tag boundaries are the only literal `<`/`>` in the string.
+fn pretty_xml(xml: &str) -> String {
+    let mut out = String::new();
+    let mut depth: i32 = 0;
+    for token in xml.replace("><", ">\u{1}<").split('\u{1}') {
+        let t = token.trim_start();
+        let close_only = t.starts_with("</");
+        let decl = t.starts_with("<?");
+        let opens = t.starts_with('<') && !close_only && !decl && !t.ends_with("/>");
+        let has_inner_close = t.contains("</");
+
+        if close_only {
+            depth = (depth - 1).max(0);
+        }
+        for _ in 0..depth {
+            out.push_str("  ");
+        }
+        out.push_str(token);
+        out.push('\n');
+        if opens && !has_inner_close {
+            depth += 1;
+        }
+    }
+    out
+}
+
+/// Return the raw KeePass inner-XML for a single entry (protected values stay
+/// encrypted, exactly as stored). Used by the "Metadata / XML" inspector.
+#[tauri::command]
+pub async fn get_entry_xml(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<String, String> {
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+
+    let mut cursor = Cursor::new(&bytes);
+    let xml_bytes = keepass::Database::get_xml(
+        &mut cursor,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to read XML: {e}"))?;
+    let xml = String::from_utf8_lossy(&xml_bytes);
+
+    let entry_uuid = uuid::Uuid::parse_str(&uuid).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let uuid_b64 = BASE64_STANDARD.encode(entry_uuid.as_bytes());
+
+    let fragment =
+        extract_entry_xml(&xml, &uuid_b64).ok_or_else(|| "Entry not found in XML".to_string())?;
+    Ok(pretty_xml(&fragment))
 }
 
 #[tauri::command]

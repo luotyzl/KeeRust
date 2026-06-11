@@ -160,7 +160,7 @@ function parseOtpUri(uri) {
   }
 }
 
-async function computeTOTP(secret, period, digits) {
+async function computeTOTP(secret, period, digits, algorithm = "SHA1") {
   const keyData = base32Decode(secret);
   if (!keyData || keyData.byteLength === 0) return null;
 
@@ -168,7 +168,8 @@ async function computeTOTP(secret, period, digits) {
   const buf = new ArrayBuffer(8);
   new DataView(buf).setUint32(4, counter >>> 0, false);
 
-  const algo = { name: "HMAC", hash: "SHA-1" };
+  const hash = { SHA1: "SHA-1", SHA256: "SHA-256", SHA512: "SHA-512" }[algorithm] || "SHA-1";
+  const algo = { name: "HMAC", hash };
   const key = await crypto.subtle.importKey("raw", keyData, algo, false, ["sign"]);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, buf));
 
@@ -189,7 +190,7 @@ function stopOtpTimers() {
 }
 
 function startOtpWidget(container, otpUri) {
-  const { secret, period, digits } = parseOtpUri(otpUri);
+  const { secret, period, digits, algorithm } = parseOtpUri(otpUri);
   if (!secret) return;
 
   const codeEl = container.querySelector(".otp-code");
@@ -208,7 +209,7 @@ function startOtpWidget(container, otpUri) {
 
     // Only recompute code on new period
     if (elapsed === 0 || codeEl.textContent === "------") {
-      const code = await computeTOTP(secret, period, digits);
+      const code = await computeTOTP(secret, period, digits, algorithm);
       codeEl.textContent = code || "------";
     }
   }
@@ -453,6 +454,12 @@ function renderDetail() {
     html += `</div>`;
   }
 
+  // Metadata / raw XML
+  html += `
+    <div class="detail-meta-row">
+      <button class="btn-meta" id="btn-entry-xml">&lt;/&gt; View XML metadata</button>
+    </div>`;
+
   el.innerHTML = html;
 
   // Wire up events
@@ -548,6 +555,23 @@ function renderDetail() {
   // Delete / restore buttons
   el.querySelector("#btn-delete-entry")?.addEventListener("click", () => showDeleteModal(e, inRecycleBin));
   el.querySelector("#btn-restore-entry")?.addEventListener("click", () => restoreEntry(e));
+
+  // View XML metadata
+  el.querySelector("#btn-entry-xml")?.addEventListener("click", () => showEntryXml(e));
+}
+
+// ── Entry XML inspector ─────────────────────────────────────────────────────────
+async function showEntryXml(e) {
+  const pre = document.getElementById("xml-content");
+  const modal = document.getElementById("xml-modal");
+  pre.textContent = "Loading…";
+  modal.classList.remove("hidden");
+  try {
+    const xml = await invoke("get_entry_xml", { password: masterPassword, uuid: e.uuid });
+    pre.textContent = xml;
+  } catch (err) {
+    pre.textContent = "Failed to load XML: " + String(err);
+  }
 }
 
 // ── Edit form ─────────────────────────────────────────────────────────────────
@@ -939,6 +963,16 @@ document.getElementById("modal-cancel").addEventListener("click", hideDeleteModa
 
 document.getElementById("delete-modal").addEventListener("click", (ev) => {
   if (ev.target === ev.currentTarget) hideDeleteModal(); // click outside box
+});
+
+// XML inspector modal
+function hideXmlModal() { document.getElementById("xml-modal").classList.add("hidden"); }
+document.getElementById("xml-close").addEventListener("click", hideXmlModal);
+document.getElementById("xml-modal").addEventListener("click", (ev) => {
+  if (ev.target === ev.currentTarget) hideXmlModal(); // click outside box
+});
+document.getElementById("xml-copy").addEventListener("click", () => {
+  copyText(document.getElementById("xml-content").textContent, "XML");
 });
 
 document.getElementById("modal-confirm").addEventListener("click", async () => {
