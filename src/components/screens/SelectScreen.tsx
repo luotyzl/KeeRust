@@ -1,0 +1,328 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent } from "react";
+import { useApp } from "../../store";
+import type { EntryData } from "../../types";
+import { filterGetEntries, shortUrl } from "../../lib/autotype";
+import { parseOtpUri, computeTOTP } from "../../lib/totp";
+import { copyText, showToast } from "../../stores/toast";
+import {
+  selectStore,
+  useSelect,
+  typeCreds,
+  pickField,
+  closeSelectView,
+} from "../../stores/autotype";
+
+interface MenuState {
+  visible: boolean;
+  x: number;
+  y: number;
+  items: { label: string; run: () => void }[];
+}
+
+export default function SelectScreen() {
+  const vaultData = useApp((s) => s.vaultData);
+  const filter = useSelect((s) => s.filter);
+  const index = useSelect((s) => s.index);
+
+  const entries = useMemo<EntryData[]>(
+    () => (filter ? filterGetEntries(vaultData, filter) : []),
+    [vaultData, filter]
+  );
+
+  const [menu, setMenu] = useState<MenuState>({ visible: false, x: 0, y: 0, items: [] });
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  // Refs with the latest values for the (stable) keydown listener.
+  const entriesRef = useRef(entries);
+  const indexRef = useRef(index);
+  const menuVisibleRef = useRef(menu.visible);
+  entriesRef.current = entries;
+  indexRef.current = index;
+  menuVisibleRef.current = menu.visible;
+
+  function setIndex(i: number) {
+    selectStore.setState({ index: i });
+  }
+  function updateFilter(patch: Partial<NonNullable<typeof filter>>) {
+    const cur = selectStore.getState().filter;
+    if (!cur) return;
+    selectStore.setState({ filter: { ...cur, ...patch }, index: 0 });
+  }
+
+  const message = (() => {
+    if (!filter) return "";
+    const target = filter.title || shortUrl(filter.url || "");
+    return target ? `Select a password for ${target}` : "Select an entry to auto-type";
+  })();
+
+  const chips = (() => {
+    if (!filter) return [] as { id: string; label: string; text: string; active: boolean }[];
+    const out: { id: string; label: string; text: string; active: boolean }[] = [];
+    if (filter.url) {
+      out.push({ id: "url", label: "Website", text: shortUrl(filter.url), active: filter.useUrl });
+      out.push({
+        id: "subdomains",
+        label: "Subdomains",
+        text: "",
+        active: filter.useUrl && filter.subdomains,
+      });
+    }
+    if (filter.title)
+      out.push({ id: "title", label: "Title", text: filter.title, active: filter.useTitle });
+    if (filter.text) out.push({ id: "text", label: "Contains", text: filter.text, active: true });
+    return out;
+  })();
+
+  function onChipClick(id: string) {
+    if (!filter) return;
+    if (id === "url") updateFilter({ useUrl: !filter.useUrl });
+    else if (id === "subdomains") {
+      const active = !(filter.useUrl && filter.subdomains);
+      updateFilter({ subdomains: active, useUrl: active ? true : filter.useUrl });
+    } else if (id === "title") updateFilter({ useTitle: !filter.useTitle });
+    else if (id === "text") updateFilter({ text: "" });
+  }
+
+  function closeMenu() {
+    setMenu((m) => ({ ...m, visible: false, items: [] }));
+  }
+
+  function buildMenuItems(e: EntryData) {
+    const items: { label: string; run: () => void }[] = [];
+    if (e.password) items.push({ label: "Type password", run: () => pickField(e.password) });
+    if (e.username) items.push({ label: "Type username", run: () => pickField(e.username) });
+    if (e.otp_uri) {
+      items.push({
+        label: "Type one-time code",
+        run: async () => {
+          const { secret, period, digits, algorithm } = parseOtpUri(e.otp_uri!);
+          const code = await computeTOTP(secret, period, digits, algorithm);
+          if (code) pickField(code);
+          else showToast("Could not generate one-time code");
+        },
+      });
+    }
+    for (const cf of e.custom_fields || []) {
+      items.push({ label: `Type: ${cf.name}`, run: () => pickField(cf.value) });
+    }
+    return items;
+  }
+
+  function openMenu(ev: MouseEvent, e: EntryData, i: number) {
+    ev.stopPropagation();
+    setIndex(i);
+    const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    setMenu({
+      visible: true,
+      x: Math.max(8, r.right - 150),
+      y: r.bottom + 4,
+      items: buildMenuItems(e),
+    });
+  }
+
+  function runMenuItem(item: { run: () => void }) {
+    closeMenu();
+    item.run();
+  }
+
+  function copyPassword() {
+    const e = entriesRef.current[indexRef.current];
+    closeMenu();
+    if (e) copyText(e.password || "", "Password");
+  }
+
+  function openMenuForSelected() {
+    const rows = listRef.current?.querySelectorAll(".select-item");
+    const row = rows?.[indexRef.current] as HTMLElement | undefined;
+    const btn = row?.querySelector(".select-actions-btn") as HTMLElement | undefined;
+    const e = entriesRef.current[indexRef.current];
+    if (btn && e) {
+      const r = btn.getBoundingClientRect();
+      setMenu({
+        visible: true,
+        x: Math.max(8, r.right - 150),
+        y: r.bottom + 4,
+        items: buildMenuItems(e),
+      });
+    }
+  }
+
+  function rowClick(ev: MouseEvent, e: EntryData) {
+    if ((ev.target as HTMLElement).closest(".select-actions-btn")) return;
+    closeSelectView();
+    typeCreds(e);
+  }
+
+  // Stable keyboard handler (reads refs for fresh state).
+  useEffect(() => {
+    function onKeydown(e: KeyboardEvent) {
+      if (menuVisibleRef.current) {
+        if (e.key === "Escape") {
+          closeMenu();
+          e.preventDefault();
+        }
+        return;
+      }
+      const list = entriesRef.current;
+      const idx = indexRef.current;
+      if (e.key === "ArrowDown") {
+        setIndex(Math.min(idx + 1, list.length - 1));
+        e.preventDefault();
+      } else if (e.key === "ArrowUp") {
+        setIndex(Math.max(idx - 1, 0));
+        e.preventDefault();
+      } else if (e.key === "Enter") {
+        const en = list[idx];
+        if (en) {
+          if (e.shiftKey) openMenuForSelected();
+          else if (e.ctrlKey || e.metaKey) pickField(en.password);
+          else if (e.altKey) pickField(en.username);
+          else {
+            closeSelectView();
+            typeCreds(en);
+          }
+        }
+        e.preventDefault();
+      } else if (e.key === "Escape") {
+        closeSelectView();
+        e.preventDefault();
+      } else if (e.key === "Backspace") {
+        const cur = selectStore.getState().filter;
+        if (cur?.text) updateFilter({ text: cur.text.slice(0, -1) });
+        e.preventDefault();
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        const cur = selectStore.getState().filter;
+        if (cur) updateFilter({ text: cur.text + e.key });
+        e.preventDefault();
+      }
+    }
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Scroll the selected row into view when the index changes.
+  useEffect(() => {
+    const rows = listRef.current?.querySelectorAll(".select-item");
+    (rows?.[index] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest" });
+  }, [index]);
+
+  // Close the actions menu on any outside click.
+  useEffect(() => {
+    if (!menu.visible) return;
+    const onDocClick = () => closeMenu();
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, [menu.visible]);
+
+  return (
+    <div id="screen-select" className="screen active">
+      <div className="select-screen">
+        <div className="select-header">
+          <h2 className="select-title">Auto-Type: Select</h2>
+          <div className="select-shortcuts">
+            <div>
+              <span className="sc-key">Enter</span>: Type the auto-type sequence
+            </div>
+            <div>
+              <span className="sc-key">Ctrl + Enter</span>: Only type the password
+            </div>
+            <div>
+              <span className="sc-key">Alt + Enter</span>: Only type the username
+            </div>
+            <div>
+              <span className="sc-key">Shift + Enter</span>: Other fields
+            </div>
+          </div>
+        </div>
+
+        <div className="select-message">{message}</div>
+
+        <div className="select-filters">
+          {chips.map((chip) => (
+            <div
+              key={chip.id}
+              className={"select-filter" + (chip.active ? " active" : "")}
+              onClick={() => onChipClick(chip.id)}
+            >
+              <span className="sf-check">{chip.active ? "☑" : "☐"}</span>
+              <span className="sf-text">
+                {chip.label}
+                {chip.text ? ": " + chip.text : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div ref={listRef} className="select-list">
+          {entries.length === 0 ? (
+            <div className="select-empty">No matching entries</div>
+          ) : (
+            <table className="select-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Username</th>
+                  <th>Website</th>
+                  <th className="actions-col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e, i) => (
+                  <tr
+                    key={e.uuid}
+                    className={"select-item" + (i === index ? " selected" : "")}
+                    onClick={(ev) => rowClick(ev, e)}
+                    onMouseMove={() => index !== i && setIndex(i)}
+                  >
+                    <td title={e.title || ""}>{e.title || "(no title)"}</td>
+                    <td className="col-user" title={e.username || ""}>
+                      {e.username || ""}
+                    </td>
+                    <td className="col-url" title={e.url || ""}>
+                      {e.url || ""}
+                    </td>
+                    <td className="actions-cell">
+                      <button
+                        className="select-actions-btn"
+                        title="More…"
+                        onClick={(ev) => openMenu(ev, e, i)}
+                      >
+                        ⋯
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="select-foot">
+          <button className="btn-modal-cancel" onClick={closeSelectView}>
+            Cancel (Esc)
+          </button>
+        </div>
+      </div>
+
+      {menu.visible && (
+        <div
+          className="select-actions-menu"
+          style={{ top: menu.y, left: menu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {menu.items.map((item, i) => (
+            <button key={i} className="select-actions-item" onClick={() => runMenuItem(item)}>
+              {item.label}
+            </button>
+          ))}
+          <div className="select-actions-divider" />
+          <button className="select-actions-item" onClick={copyPassword}>
+            🔑 Copy password
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
