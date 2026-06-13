@@ -30,7 +30,10 @@ onMounted(() => header.value?.focusSearch());
 </script>
 
 <template>
-  <div id="screen-vault" class="screen active">
+  <!-- `dark` scopes shadcn token-based components in the (still-dark) vault to
+       dark mode, regardless of the global theme. Dropped when the vault itself
+       is converted. -->
+  <div id="screen-vault" class="screen active dark">
     <VaultHeader ref="header" />
 
     <div class="sync-banner" :class="{ visible: store.syncBannerVisible }">

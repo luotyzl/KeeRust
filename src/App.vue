@@ -13,7 +13,7 @@ import VaultScreen from "./components/screens/VaultScreen.vue";
 import SelectScreen from "./components/screens/SelectScreen.vue";
 import ConfirmModal from "./components/modals/ConfirmModal.vue";
 import XmlModal from "./components/modals/XmlModal.vue";
-import Toast from "./components/Toast.vue";
+import { Toaster } from "@/components/ui/sonner";
 
 interface AutoTypePayload {
   title?: string;
@@ -62,5 +62,5 @@ onMounted(async () => {
 
   <ConfirmModal />
   <XmlModal />
-  <Toast />
+  <Toaster position="bottom-center" />
 </template>

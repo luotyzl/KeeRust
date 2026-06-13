@@ -1,9 +1,11 @@
+/* Legacy KeeRust styles for the not-yet-converted vault/select screens.
+   Wrapped in @layer base so shadcn-vue's Tailwind utilities always win. */
+@layer base {
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
   font-family: system-ui, -apple-system, sans-serif;
-  background: #0f1117;
-  color: #e2e8f0;
   height: 100vh;
   overflow: hidden;
 }
@@ -26,29 +28,7 @@ body {
 .logo h1 { font-size: 2rem; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
 .logo p  { color: #64748b; font-size: 0.9rem; margin-top: 0.25rem; }
 
-h2 {
-  font-size: 1.1rem; font-weight: 600; color: #94a3b8;
-  margin-bottom: 1.5rem; text-align: center;
-  text-transform: uppercase; letter-spacing: 0.05em;
-}
-
 .form-group { margin-bottom: 1rem; }
-label {
-  display: block; font-size: 0.8rem; font-weight: 500;
-  color: #94a3b8; margin-bottom: 0.35rem;
-  text-transform: uppercase; letter-spacing: 0.04em;
-}
-input[type="url"],
-input[type="text"],
-input[type="password"],
-input[type="search"] {
-  width: 100%; padding: 0.65rem 0.9rem;
-  background: #1e2433; border: 1px solid #2d3748;
-  border-radius: 8px; color: #e2e8f0; font-size: 0.95rem;
-  outline: none; transition: border-color 0.15s;
-}
-input:focus { border-color: #4a90e2; }
-input::placeholder { color: #4a5568; }
 
 .btn {
   width: 100%; padding: 0.75rem; background: #4a90e2;
@@ -771,3 +751,8 @@ input::placeholder { color: #4a5568; }
   z-index: 100;
 }
 .copied-toast.show { opacity: 1; }
+
+/* Keep the not-yet-converted vault/select screens dark regardless of theme. */
+.select-screen { background: #0f1117; }
+
+}

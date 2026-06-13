@@ -1,23 +1,33 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { store, markSyncPending } from "../../store";
-import { showToast } from "../../composables/useToast";
-import { deleteModal, closeDeleteModal } from "../../composables/useModals";
-import type { VaultData } from "../../types";
+import { store, markSyncPending } from "@/store";
+import { showToast } from "@/composables/useToast";
+import { deleteModal, closeDeleteModal } from "@/composables/useModals";
+import type { VaultData } from "@/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 const inProgress = ref(false);
 
 const name = computed(() => deleteModal.entry?.title || "(no title)");
-const confirmLabel = computed(() =>
-  deleteModal.permanent ? "Delete Forever" : "Move to Recycle Bin"
-);
 const title = computed(() =>
   deleteModal.permanent ? "Delete Forever" : "Move to Recycle Bin"
 );
+const confirmLabel = computed(() => {
+  if (inProgress.value) return deleteModal.permanent ? "Deleting…" : "Moving…";
+  return deleteModal.permanent ? "Delete Forever" : "Move to Recycle Bin";
+});
 
-function onOverlayClick(): void {
-  if (!inProgress.value) closeDeleteModal();
+function onOpenChange(open: boolean): void {
+  if (!open && !inProgress.value) closeDeleteModal();
 }
 
 async function confirm(): Promise<void> {
@@ -43,30 +53,30 @@ async function confirm(): Promise<void> {
 </script>
 
 <template>
-  <div
-    v-if="deleteModal.visible"
-    class="modal-overlay"
-    @click.self="onOverlayClick"
-  >
-    <div class="modal-box">
-      <div class="modal-title">{{ title }}</div>
-      <div class="modal-body">
-        <template v-if="deleteModal.permanent">
-          Permanently delete <strong>{{ name }}</strong>? This
-          <strong>cannot be undone</strong> — the entry will be gone forever.
-        </template>
-        <template v-else>
-          Move <strong>{{ name }}</strong> to the Recycle Bin?
-        </template>
-      </div>
-      <div class="modal-actions">
-        <button class="btn-modal-cancel" :disabled="inProgress" @click="closeDeleteModal">
+  <Dialog :open="deleteModal.visible" @update:open="onOpenChange">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{ title }}</DialogTitle>
+        <DialogDescription>
+          <template v-if="deleteModal.permanent">
+            Permanently delete <strong class="text-foreground">{{ name }}</strong>?
+            This <strong class="text-foreground">cannot be undone</strong> — the
+            entry will be gone forever.
+          </template>
+          <template v-else>
+            Move <strong class="text-foreground">{{ name }}</strong> to the
+            Recycle Bin?
+          </template>
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" :disabled="inProgress" @click="closeDeleteModal">
           Cancel
-        </button>
-        <button class="btn-modal-confirm" :disabled="inProgress" @click="confirm">
-          {{ inProgress ? (deleteModal.permanent ? "Deleting…" : "Moving…") : confirmLabel }}
-        </button>
-      </div>
-    </div>
-  </div>
+        </Button>
+        <Button variant="destructive" :disabled="inProgress" @click="confirm">
+          {{ confirmLabel }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

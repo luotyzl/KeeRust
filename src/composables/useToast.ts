@@ -1,24 +1,8 @@
-import { reactive } from "vue";
+import { toast } from "vue-sonner";
 
-interface ToastState {
-  message: string;
-  visible: boolean;
-}
-
-export const toastState = reactive<ToastState>({
-  message: "",
-  visible: false,
-});
-
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
-
+// Thin wrapper over vue-sonner so the rest of the app keeps a stable API.
 export function showToast(msg: string): void {
-  toastState.message = msg;
-  toastState.visible = true;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toastState.visible = false;
-  }, 1800);
+  toast(msg);
 }
 
 // Copy text to the clipboard and toast the result.

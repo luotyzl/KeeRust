@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue";
-import { store, lock } from "../../store";
-import { deleteModal } from "../../composables/useModals";
-import type { SearchFields } from "../../types";
+import { store, lock } from "@/store";
+import { deleteModal } from "@/composables/useModals";
+import type { SearchFields } from "@/types";
+import { Button } from "@/components/ui/button";
+import ThemeToggle from "@/components/ThemeToggle.vue";
 
 const optsOpen = ref(false);
 const searchInput = ref<HTMLInputElement | null>(null);
@@ -116,7 +118,8 @@ onUnmounted(() => {
       </div>
     </div>
     <span class="sync-dot" :class="store.syncDot" title="Sync status"></span>
-    <button class="btn-lock" @click="newEntry">+ New</button>
-    <button class="btn-lock" @click="lock">🔒 Lock</button>
+    <ThemeToggle />
+    <Button variant="outline" size="sm" @click="newEntry">+ New</Button>
+    <Button variant="outline" size="sm" @click="lock">🔒 Lock</Button>
   </header>
 </template>
