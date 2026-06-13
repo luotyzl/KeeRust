@@ -1,13 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { setApp, getApp, markSyncPending } from "../../store";
-import { showToast } from "../../stores/toast";
-import { avatarColor } from "../../lib/avatar";
-import { iconEmoji } from "../../lib/icons";
-import { DEFAULT_AT_SEQUENCE } from "../../lib/autotype";
-import type { CustomField, EntryData, SaveResult } from "../../types";
+import { Pencil, Plus, X } from "lucide-react";
+import { setApp, getApp, markSyncPending } from "@/store";
+import { showToast } from "@/stores/toast";
+import { avatarColor } from "@/lib/avatar";
+import { iconEmoji } from "@/lib/icons";
+import { DEFAULT_AT_SEQUENCE } from "@/lib/autotype";
+import type { CustomField, EntryData, SaveResult } from "@/types";
 import IconPicker from "./IconPicker";
 import KeystrokeHelper from "./KeystrokeHelper";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-muted-foreground mt-5 mb-2 flex items-center justify-between border-b pb-1.5 text-xs font-semibold tracking-wider uppercase">
+      {children}
+    </div>
+  );
+}
 
 export default function EntryEditForm({
   entry,
@@ -22,8 +36,7 @@ export default function EntryEditForm({
     () =>
       entry ?? {
         uuid: "",
-        group_uuid:
-          getApp().selectedGroupUuid || getApp().vaultData?.groups[0]?.uuid || "",
+        group_uuid: getApp().selectedGroupUuid || getApp().vaultData?.groups[0]?.uuid || "",
         title: "", username: "", password: "", url: "", notes: "",
         group_name: "",
         otp_uri: null, custom_fields: [], attachments: [], history: [],
@@ -46,7 +59,6 @@ export default function EntryEditForm({
     base.custom_fields.map((cf) => ({ ...cf }))
   );
 
-  // Icon state: built-in index, or -1 to keep an existing custom icon.
   const [selectedIconId, setSelectedIconId] = useState<number>(
     typeof base.icon_id === "number" ? base.icon_id : 0
   );
@@ -65,8 +77,7 @@ export default function EntryEditForm({
     titleRef.current?.focus();
   }, []);
 
-  const previewCustomIcon =
-    pendingCustomIcon || (selectedIconId < 0 ? existingCustomIcon : null);
+  const previewCustomIcon = pendingCustomIcon || (selectedIconId < 0 ? existingCustomIcon : null);
   const avatarBg = previewCustomIcon ? "transparent" : avatarColor(title || "New");
 
   function pickBuiltin(id: number) {
@@ -74,17 +85,14 @@ export default function EntryEditForm({
     setPendingCustomIcon(null);
     setShowIconGrid(false);
   }
-
   function onFavicon(b64: string) {
     setPendingCustomIcon(b64);
-    setSelectedIconId(-1); // custom icon takes over
+    setSelectedIconId(-1);
     setShowIconGrid(false);
   }
 
   function setCf(i: number, patch: Partial<CustomField>) {
-    setCustomFields((prev) =>
-      prev.map((cf, idx) => (idx === i ? { ...cf, ...patch } : cf))
-    );
+    setCustomFields((prev) => prev.map((cf, idx) => (idx === i ? { ...cf, ...patch } : cf)));
   }
   function addCustomField() {
     setCustomFields((prev) => [...prev, { name: "", value: "", protected: false }]);
@@ -93,7 +101,6 @@ export default function EntryEditForm({
     setCustomFields((prev) => prev.filter((_, idx) => idx !== i));
   }
 
-  // Insert a keystroke token at the cursor in the sequence input.
   function insertToken(token: string) {
     const input = seqRef.current;
     const start = input?.selectionStart ?? atSeq.length;
@@ -129,8 +136,8 @@ export default function EntryEditForm({
       notes,
       otp_uri: otpUri.trim(),
       custom_fields: cleanFields,
-      icon_id: selectedIconId, // -1 keeps an existing custom icon untouched
-      custom_icon_base64: pendingCustomIcon, // set only when a favicon was downloaded
+      icon_id: selectedIconId,
+      custom_icon_base64: pendingCustomIcon,
       autotype_enabled: atEnabled,
       autotype_sequence: atSeq.trim(),
       autotype_obfuscation: atObf,
@@ -142,11 +149,7 @@ export default function EntryEditForm({
         password: getApp().masterPassword,
         entry: update,
       });
-      setApp({
-        vaultData: result.vault,
-        selectedEntryUuid: result.saved_uuid,
-        editMode: false,
-      });
+      setApp({ vaultData: result.vault, selectedEntryUuid: result.saved_uuid, editMode: false });
       showToast(isNew ? "Entry added" : "Entry saved");
       markSyncPending();
       onDone();
@@ -162,30 +165,31 @@ export default function EntryEditForm({
   }
 
   return (
-    <div className="edit-form">
-      <div className="edit-header">
+    <div className="flex flex-col">
+      <div className="mb-4 flex items-center gap-3">
         <button
           type="button"
-          className="detail-avatar edit-avatar-btn"
-          style={{ background: avatarBg }}
           title="Change icon"
           onClick={() => setShowIconGrid((v) => !v)}
+          className="relative flex size-10 shrink-0 items-center justify-center rounded-lg text-lg text-white transition hover:brightness-110"
+          style={{ background: avatarBg }}
         >
           {previewCustomIcon ? (
             <img
-              className="avatar-img"
+              className="size-full rounded-[inherit] object-contain"
               src={`data:image/png;base64,${previewCustomIcon}`}
               alt=""
             />
           ) : (
-            <span className="avatar-emoji">
-              {iconEmoji(selectedIconId < 0 ? 0 : selectedIconId)}
-            </span>
+            <span className="leading-none">{iconEmoji(selectedIconId < 0 ? 0 : selectedIconId)}</span>
           )}
+          <span className="bg-primary text-primary-foreground border-background absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border-2">
+            <Pencil className="size-2" />
+          </span>
         </button>
-        <input
+        <Input
           ref={titleRef}
-          className="edit-title-input"
+          className="h-auto border-0 border-b border-input px-0 text-lg font-bold shadow-none focus-visible:border-ring focus-visible:ring-0 rounded-none"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Entry title"
@@ -202,43 +206,34 @@ export default function EntryEditForm({
         />
       )}
 
-      <div className="edit-section-header">Credentials</div>
-      <div className="edit-field-group">
-        <label className="edit-label">Username</label>
-        <div className="edit-field-row">
-          <input
-            className="edit-input"
+      <SectionHeader>Credentials</SectionHeader>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label>Username</Label>
+          <Input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="Username"
             autoComplete="off"
           />
         </div>
-      </div>
-      <div className="edit-field-group">
-        <label className="edit-label">Password</label>
-        <div className="edit-field-row">
-          <input
-            className="edit-input"
-            type={showPassword ? "text" : "password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="off"
-          />
-          <button
-            className="icon-btn"
-            type="button"
-            onClick={() => setShowPassword((v) => !v)}
-          >
-            {showPassword ? "Hide" : "Show"}
-          </button>
+        <div className="space-y-1.5">
+          <Label>Password</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="off"
+            />
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowPassword((v) => !v)}>
+              {showPassword ? "Hide" : "Show"}
+            </Button>
+          </div>
         </div>
-      </div>
-      <div className="edit-field-group">
-        <label className="edit-label">URL</label>
-        <div className="edit-field-row">
-          <input
-            className="edit-input"
+        <div className="space-y-1.5">
+          <Label>URL</Label>
+          <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://"
@@ -247,78 +242,69 @@ export default function EntryEditForm({
         </div>
       </div>
 
-      <div className="edit-section-header">Notes</div>
-      <textarea
-        className="edit-textarea"
+      <SectionHeader>Notes</SectionHeader>
+      <Textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Notes..."
+        className="min-h-20"
       />
 
-      <div className="edit-section-header">OTP</div>
-      <div className="edit-field-row" style={{ marginBottom: "0.25rem" }}>
-        <input
-          className="edit-input"
-          value={otpUri}
-          onChange={(e) => setOtpUri(e.target.value)}
-          placeholder="otpauth://totp/Account?secret=BASE32SECRET"
-          autoComplete="off"
-        />
-      </div>
+      <SectionHeader>OTP</SectionHeader>
+      <Input
+        value={otpUri}
+        onChange={(e) => setOtpUri(e.target.value)}
+        placeholder="otpauth://totp/Account?secret=BASE32SECRET"
+        autoComplete="off"
+      />
 
-      <div className="edit-section-header">
+      <SectionHeader>
         <span>Custom Fields</span>
-        <button className="icon-btn" type="button" onClick={addCustomField}>
-          + Add Field
-        </button>
-      </div>
-      <div>
+        <Button type="button" variant="ghost" size="xs" onClick={addCustomField}>
+          <Plus /> Add Field
+        </Button>
+      </SectionHeader>
+      <div className="space-y-2">
         {customFields.map((cf, i) => (
-          <div key={i} className="edit-cf-row">
-            <input
-              className="edit-input edit-cf-name"
+          <div key={i} className="flex items-center gap-2">
+            <Input
+              className="basis-[35%]"
               value={cf.name}
               onChange={(e) => setCf(i, { name: e.target.value })}
               placeholder="Field name"
               autoComplete="off"
             />
-            <input
-              className="edit-input edit-cf-value"
+            <Input
+              className="flex-1"
               value={cf.value}
               onChange={(e) => setCf(i, { value: e.target.value })}
               placeholder="Value"
               autoComplete="off"
             />
-            <label className="edit-cf-protected-label">
-              <input
-                type="checkbox"
+            <label className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs">
+              <Checkbox
                 checked={cf.protected}
-                onChange={(e) => setCf(i, { protected: e.target.checked })}
-              />{" "}
+                onCheckedChange={(v) => setCf(i, { protected: v === true })}
+              />
               Protected
             </label>
-            <button className="icon-btn" type="button" onClick={() => removeCustomField(i)}>
-              ×
-            </button>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeCustomField(i)}>
+              <X />
+            </Button>
           </div>
         ))}
       </div>
 
-      <div className="edit-section-header">Auto-Type</div>
-      <label className="edit-checkbox-row">
-        <input
-          type="checkbox"
-          checked={atEnabled}
-          onChange={(e) => setAtEnabled(e.target.checked)}
-        />
+      <SectionHeader>Auto-Type</SectionHeader>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={atEnabled} onCheckedChange={(v) => setAtEnabled(v === true)} />
         Enable auto-type for this entry
       </label>
-      <div className="edit-field-group">
-        <label className="edit-label">Keystrokes</label>
-        <div className="edit-field-row at-seq-wrap">
-          <input
+      <div className="mt-3 space-y-1.5">
+        <Label>Keystrokes</Label>
+        <div className="relative">
+          <Input
             ref={seqRef}
-            className="edit-input"
             value={atSeq}
             onChange={(e) => setAtSeq(e.target.value)}
             placeholder={DEFAULT_AT_SEQUENCE}
@@ -328,26 +314,22 @@ export default function EntryEditForm({
           />
           {showHelper && <KeystrokeHelper onInsert={insertToken} />}
         </div>
-        <div className="edit-at-hint">
+        <p className="text-muted-foreground text-xs">
           Click the field to insert fields, modifiers and keys. Empty = default sequence.
-        </div>
+        </p>
       </div>
-      <label className="edit-checkbox-row">
-        <input
-          type="checkbox"
-          checked={atObf}
-          onChange={(e) => setAtObf(e.target.checked)}
-        />
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <Checkbox checked={atObf} onCheckedChange={(v) => setAtObf(v === true)} />
         Mix real keystrokes with random
       </label>
 
-      <div className="edit-actions">
-        <button className="btn-save-entry" disabled={saving} onClick={save}>
+      <div className="mt-6 flex gap-2 border-t pt-4">
+        <Button disabled={saving} onClick={save}>
           {saving ? "Saving…" : "Save"}
-        </button>
-        <button className="btn-cancel-entry" type="button" onClick={cancel}>
+        </Button>
+        <Button type="button" variant="outline" onClick={cancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );

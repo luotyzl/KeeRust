@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useApp, getApp, setApp } from "../../store";
-import { showToast } from "../../stores/toast";
-import type { VaultData } from "../../types";
-import VaultHeader from "../vault/VaultHeader";
-import GroupSidebar from "../vault/GroupSidebar";
-import EntryList from "../vault/EntryList";
-import EntryDetail from "../vault/EntryDetail";
+import { useApp, getApp, setApp } from "@/store";
+import { showToast } from "@/stores/toast";
+import type { VaultData } from "@/types";
+import VaultHeader from "@/components/vault/VaultHeader";
+import GroupSidebar from "@/components/vault/GroupSidebar";
+import EntryList from "@/components/vault/EntryList";
+import EntryDetail from "@/components/vault/EntryDetail";
+import { Button } from "@/components/ui/button";
 
 export default function VaultScreen() {
   const bannerVisible = useApp((s) => s.syncBannerVisible);
@@ -26,14 +27,24 @@ export default function VaultScreen() {
   }
 
   return (
-    <div id="screen-vault" className="screen active">
+    <div className="grid h-screen grid-cols-[220px_360px_minmax(0,1fr)] grid-rows-[3rem_minmax(0,1fr)]">
       <VaultHeader />
 
-      <div className={"sync-banner" + (bannerVisible ? " visible" : "")}>
-        Remote database was updated.
-        <button onClick={reload}>Reload</button>
-        <button onClick={() => setApp({ syncBannerVisible: false })}>Dismiss</button>
-      </div>
+      {bannerVisible && (
+        <div className="bg-primary/10 text-foreground fixed top-12 right-0 left-0 z-50 flex items-center justify-center gap-3 border-b px-4 py-1.5 text-sm">
+          Remote database was updated.
+          <Button size="xs" variant="outline" onClick={reload}>
+            Reload
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => setApp({ syncBannerVisible: false })}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
 
       <GroupSidebar />
       <EntryList />

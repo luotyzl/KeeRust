@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ICON_EMOJI } from "../../lib/icons";
-import { showToast } from "../../stores/toast";
+import { Download } from "lucide-react";
+import { ICON_EMOJI } from "@/lib/icons";
+import { showToast } from "@/stores/toast";
+import { cn } from "@/lib/utils";
 
 export default function IconPicker({
   selectedIconId,
@@ -9,8 +11,8 @@ export default function IconPicker({
   onSelectBuiltin,
   onFavicon,
 }: {
-  selectedIconId: number; // highlighted built-in cell; <0 when a custom icon is active
-  url: string; // current entry URL, used as the favicon source
+  selectedIconId: number;
+  url: string;
   onSelectBuiltin: (id: number) => void;
   onFavicon: (base64: string) => void;
 }) {
@@ -35,24 +37,26 @@ export default function IconPicker({
   }
 
   return (
-    <div className="edit-icon-grid">
-      <div className="icon-grid-tools">
-        <button
-          type="button"
-          className="btn-favicon"
-          disabled={fetching}
-          onClick={getFavicon}
-        >
-          {fetching ? "Fetching favicon…" : "⬇ Download favicon from URL"}
-        </button>
-      </div>
-      <div className="icon-grid-cells">
+    <div className="bg-muted/40 mt-2 space-y-2 rounded-md border p-2">
+      <button
+        type="button"
+        disabled={fetching}
+        onClick={getFavicon}
+        className="text-primary hover:bg-accent flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-2 text-xs disabled:opacity-60"
+      >
+        <Download className="size-3.5" />
+        {fetching ? "Fetching favicon…" : "Download favicon from URL"}
+      </button>
+      <div className="grid max-h-48 grid-cols-10 gap-1 overflow-y-auto">
         {ICON_EMOJI.map((emoji, i) => (
           <button
             key={i}
             type="button"
-            className={"icon-pick" + (i === selectedIconId ? " selected" : "")}
             onClick={() => onSelectBuiltin(i)}
+            className={cn(
+              "hover:bg-accent flex aspect-square items-center justify-center rounded-md border border-transparent text-base",
+              i === selectedIconId && "border-ring bg-accent"
+            )}
           >
             {emoji}
           </button>

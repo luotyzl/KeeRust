@@ -12,7 +12,7 @@ import VaultScreen from "./components/screens/VaultScreen";
 import SelectScreen from "./components/screens/SelectScreen";
 import ConfirmModal from "./components/modals/ConfirmModal";
 import XmlModal from "./components/modals/XmlModal";
-import Toast from "./components/Toast";
+import { Toaster } from "./components/ui/sonner";
 
 interface AutoTypePayload {
   title?: string;
@@ -78,7 +78,7 @@ export default function App() {
 
       <ConfirmModal />
       <XmlModal />
-      <Toast />
+      <Toaster position="bottom-center" richColors />
     </>
   );
 }

@@ -1,7 +1,20 @@
-import { useEffect, useRef, useState } from "react";
-import { useApp, getApp, setApp, lock } from "../../store";
-import { modalStore } from "../../stores/modals";
-import type { SearchFields } from "../../types";
+import { useEffect, useRef } from "react";
+import { Lock, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { useApp, getApp, setApp, lock } from "@/store";
+import { modalStore } from "@/stores/modals";
+import type { SearchFields } from "@/types";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import ThemeToggle from "@/components/ThemeToggle";
+import { cn } from "@/lib/utils";
 
 const FIELD_LIST: Array<{ key: keyof SearchFields; label: string }> = [
   { key: "title", label: "Title" },
@@ -23,12 +36,18 @@ function isEditableTarget(el: Element | null): boolean {
   );
 }
 
+const DOT_CLASS: Record<string, string> = {
+  syncing: "bg-primary animate-pulse",
+  ok: "bg-success",
+  error: "bg-destructive",
+  "": "bg-transparent",
+};
+
 export default function VaultHeader() {
   const searchQuery = useApp((s) => s.searchQuery);
   const searchFields = useApp((s) => s.searchFields);
   const searchCaseSensitive = useApp((s) => s.searchCaseSensitive);
   const syncDot = useApp((s) => s.syncDot);
-  const [optsOpen, setOptsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   function newEntry() {
@@ -43,16 +62,8 @@ export default function VaultHeader() {
     });
   }
 
-  // Focus the search box when the vault first appears.
   useEffect(() => {
     searchRef.current?.focus();
-  }, []);
-
-  // Close the options dropdown on any outside click.
-  useEffect(() => {
-    const onDocClick = () => setOptsOpen(false);
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
   }, []);
 
   // Type-to-search (KeeWeb-style): a printable keypress jumps into the search box.
@@ -82,64 +93,68 @@ export default function VaultHeader() {
   }, []);
 
   return (
-    <header className="vault-header">
-      <span className="vault-brand">KeeRust</span>
-      <div className="vault-search-wrap" onClick={(e) => e.stopPropagation()}>
-        <input
+    <header className="bg-card col-span-3 flex items-center gap-2 border-b px-4">
+      <span className="text-base font-bold">KeeRust</span>
+
+      <div className="relative mx-1 max-w-md flex-1">
+        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+        <Input
           ref={searchRef}
           type="search"
           placeholder="Search entries…"
           autoComplete="off"
+          className="h-8 pr-9 pl-8"
           value={searchQuery}
           onChange={(e) => setApp({ searchQuery: e.target.value, selectedEntryUuid: null })}
         />
-        <button
-          className={"search-opts-btn" + (optsOpen ? " active" : "")}
-          title="Search options"
-          aria-label="Search options"
-          onClick={(e) => {
-            e.stopPropagation();
-            setOptsOpen((v) => !v);
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-        </button>
-        {optsOpen && (
-          <div className="search-opts-dropdown" onClick={(e) => e.stopPropagation()}>
-            <div className="search-opts-title">Search in</div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="absolute top-1/2 right-0.5 size-7 -translate-y-1/2"
+              title="Search options"
+            >
+              <SlidersHorizontal className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuLabel>Search in</DropdownMenuLabel>
             {FIELD_LIST.map((f) => (
-              <label key={f.key}>
-                <input
-                  type="checkbox"
-                  checked={searchFields[f.key]}
-                  onChange={(e) => toggleField(f.key, e.target.checked)}
-                />{" "}
+              <DropdownMenuCheckboxItem
+                key={f.key}
+                checked={searchFields[f.key]}
+                onCheckedChange={(c) => toggleField(f.key, c === true)}
+                onSelect={(e) => e.preventDefault()}
+              >
                 {f.label}
-              </label>
+              </DropdownMenuCheckboxItem>
             ))}
-            <div className="search-opts-divider" />
-            <label>
-              <input
-                type="checkbox"
-                checked={searchCaseSensitive}
-                onChange={(e) =>
-                  setApp({ searchCaseSensitive: e.target.checked, selectedEntryUuid: null })
-                }
-              />{" "}
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={searchCaseSensitive}
+              onCheckedChange={(c) =>
+                setApp({ searchCaseSensitive: c === true, selectedEntryUuid: null })
+              }
+              onSelect={(e) => e.preventDefault()}
+            >
               Case sensitive
-            </label>
-          </div>
-        )}
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <span className={"sync-dot" + (syncDot ? " " + syncDot : "")} title="Sync status" />
-      <button className="btn-lock" onClick={newEntry}>
-        + New
-      </button>
-      <button className="btn-lock" onClick={lock}>
-        🔒 Lock
-      </button>
+
+      <span
+        className={cn("size-2 shrink-0 rounded-full transition-colors", DOT_CLASS[syncDot])}
+        title="Sync status"
+      />
+      <ThemeToggle />
+      <Button variant="outline" size="sm" onClick={newEntry}>
+        <Plus /> New
+      </Button>
+      <Button variant="outline" size="sm" onClick={lock}>
+        <Lock /> Lock
+      </Button>
     </header>
   );
 }

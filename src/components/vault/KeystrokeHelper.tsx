@@ -1,7 +1,5 @@
 import type { MouseEvent } from "react";
 
-// Clickable token palette shown under the keystrokes input. Calls onInsert with
-// the token; the parent owns the input and performs the cursor insertion.
 const FIELD_TOKENS = [
   "{TITLE}", "{USERNAME}", "{URL}", "{PASSWORD}", "{NOTES}", "{GROUP}",
   "{TOTP}", "{S:Custom Field Name}",
@@ -16,6 +14,26 @@ const KEY_TOKENS = [
   "{+}", "{%}", "{^}", "{~}", "{(}", "{)}", "{[}", "{]}", "{{}", "{}}",
 ];
 
+function TokenLink({
+  text,
+  token,
+  onPick,
+}: {
+  text: string;
+  token: string;
+  onPick: (ev: MouseEvent, token: string) => void;
+}) {
+  return (
+    <a
+      className="font-mono-code text-primary hover:bg-accent cursor-pointer rounded px-1 py-0.5 text-xs whitespace-nowrap"
+      onMouseDown={(e) => onPick(e, token)}
+    >
+      {text}
+    </a>
+  );
+}
+
+// Clickable token palette shown under the keystrokes input.
 export default function KeystrokeHelper({
   onInsert,
 }: {
@@ -28,12 +46,12 @@ export default function KeystrokeHelper({
   };
 
   return (
-    <div className="at-helper">
-      <div className="at-helper-block">
-        <div className="at-helper-head">
+    <div className="bg-popover absolute top-[calc(100%+4px)] right-0 left-0 z-50 max-h-72 overflow-y-auto rounded-md border p-3 shadow-md">
+      <div className="mb-2.5">
+        <div className="text-muted-foreground mb-1.5 flex items-baseline justify-between text-xs">
           <span>Entry fields:</span>
           <a
-            className="at-helper-more"
+            className="text-primary hover:underline"
             href="https://keepass.info/help/base/autotype.html"
             target="_blank"
             rel="noreferrer"
@@ -41,35 +59,25 @@ export default function KeystrokeHelper({
             more…
           </a>
         </div>
-        <div className="at-helper-tokens">
+        <div className="flex flex-wrap gap-x-2 gap-y-1">
           {FIELD_TOKENS.map((t) => (
-            <a key={t} onMouseDown={(e) => pick(e, t)}>
-              {t}
-            </a>
+            <TokenLink key={t} text={t} token={t} onPick={pick} />
           ))}
         </div>
       </div>
-      <div className="at-helper-block">
-        <div className="at-helper-head">
-          <span>Modifier keys:</span>
-        </div>
-        <div className="at-helper-tokens">
+      <div className="mb-2.5">
+        <div className="text-muted-foreground mb-1.5 text-xs">Modifier keys:</div>
+        <div className="flex flex-wrap gap-x-2 gap-y-1">
           {MOD_TOKENS.map((m) => (
-            <a key={m.ins} onMouseDown={(e) => pick(e, m.ins)}>
-              {m.label}
-            </a>
+            <TokenLink key={m.ins} text={m.label} token={m.ins} onPick={pick} />
           ))}
         </div>
       </div>
-      <div className="at-helper-block">
-        <div className="at-helper-head">
-          <span>Keys:</span>
-        </div>
-        <div className="at-helper-tokens">
+      <div>
+        <div className="text-muted-foreground mb-1.5 text-xs">Keys:</div>
+        <div className="flex flex-wrap gap-x-2 gap-y-1">
           {KEY_TOKENS.map((t) => (
-            <a key={t} onMouseDown={(e) => pick(e, t)}>
-              {t}
-            </a>
+            <TokenLink key={t} text={t} token={t} onPick={pick} />
           ))}
         </div>
       </div>

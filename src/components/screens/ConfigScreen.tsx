@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { setApp, applySource } from "../../store";
-import type { VaultSource, WebDavConfig } from "../../types";
+import { setApp, applySource } from "@/store";
+import type { VaultSource, WebDavConfig } from "@/types";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { FolderOpen } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function ConfigScreen() {
   const [error, setError] = useState("");
@@ -37,11 +50,7 @@ export default function ConfigScreen() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const config: WebDavConfig = {
-      url: url.trim(),
-      username: username.trim(),
-      password,
-    };
+    const config: WebDavConfig = { url: url.trim(), username: username.trim(), password };
     if (!config.url || !config.username || !config.password) {
       setError("All fields are required.");
       return;
@@ -62,61 +71,73 @@ export default function ConfigScreen() {
   }
 
   return (
-    <div id="screen-config" className="screen active">
-      <div className="auth-box">
-        <div className="logo">
-          <h1>KeeRust</h1>
-          <p>KeePass for desktop</p>
-        </div>
-        <h2>Open Database</h2>
-        <button
-          ref={localBtnRef}
-          type="button"
-          className="btn btn-secondary"
-          disabled={pickingLocal}
-          onClick={pickLocal}
-        >
-          📂 Open Local File…
-        </button>
-        <div className="or-divider">or via WebDAV</div>
-        <form noValidate onSubmit={submit}>
-          <div className="form-group">
-            <label htmlFor="dav-url">WebDAV URL</label>
-            <input
-              id="dav-url"
-              type="url"
-              placeholder="https://cloud.example.com/vault.kdbx"
-              autoComplete="off"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="dav-user">Username</label>
-            <input
-              id="dav-user"
-              type="text"
-              autoComplete="off"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="dav-pass">Password</label>
-            <input
-              id="dav-pass"
-              type="password"
-              autoComplete="off"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          <div className={"error" + (error ? " visible" : "")}>{error}</div>
-          <button type="submit" className="btn" disabled={saving}>
-            {saving ? "Saving…" : "Save & Continue"}
-          </button>
-        </form>
+    <div className="relative flex h-screen items-center justify-center p-6">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
       </div>
+
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl tracking-tight">KeeRust</CardTitle>
+          <CardDescription>KeePass for desktop</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Button
+            ref={localBtnRef}
+            type="button"
+            variant="secondary"
+            className="w-full"
+            disabled={pickingLocal}
+            onClick={pickLocal}
+          >
+            <FolderOpen /> Open Local File…
+          </Button>
+
+          <div className="text-muted-foreground flex items-center gap-3 text-xs tracking-wider uppercase">
+            <Separator className="flex-1" />
+            or via WebDAV
+            <Separator className="flex-1" />
+          </div>
+
+          <form className="space-y-4" noValidate onSubmit={submit}>
+            <div className="space-y-1.5">
+              <Label htmlFor="dav-url">WebDAV URL</Label>
+              <Input
+                id="dav-url"
+                type="url"
+                placeholder="https://cloud.example.com/vault.kdbx"
+                autoComplete="off"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dav-user">Username</Label>
+              <Input
+                id="dav-user"
+                type="text"
+                autoComplete="off"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dav-pass">Password</Label>
+              <Input
+                id="dav-pass"
+                type="password"
+                autoComplete="off"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            {error && <p className="text-destructive text-sm">{error}</p>}
+            <Button type="submit" className="w-full" disabled={saving}>
+              {saving ? "Saving…" : "Save & Continue"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -1,23 +1,8 @@
-import { createStore } from "../lib/store";
+import { toast } from "sonner";
 
-interface ToastState {
-  message: string;
-  visible: boolean;
-}
-
-export const toastStore = createStore<ToastState>({
-  message: "",
-  visible: false,
-});
-
-export const useToast = toastStore.use;
-
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
-
+// Thin wrapper over sonner so the rest of the app keeps a stable API.
 export function showToast(msg: string): void {
-  toastStore.setState({ message: msg, visible: true });
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastStore.setState({ visible: false }), 1800);
+  toast(msg);
 }
 
 // Copy text to the clipboard and toast the result.

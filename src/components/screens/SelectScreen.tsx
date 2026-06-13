@@ -1,17 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
-import { useApp } from "../../store";
-import type { EntryData } from "../../types";
-import { filterGetEntries, shortUrl } from "../../lib/autotype";
-import { parseOtpUri, computeTOTP } from "../../lib/totp";
-import { copyText, showToast } from "../../stores/toast";
+import { MoreHorizontal } from "lucide-react";
+import { useApp } from "@/store";
+import type { EntryData } from "@/types";
+import { filterGetEntries, shortUrl } from "@/lib/autotype";
+import { parseOtpUri, computeTOTP } from "@/lib/totp";
+import { copyText, showToast } from "@/stores/toast";
 import {
   selectStore,
   useSelect,
   typeCreds,
   pickField,
   closeSelectView,
-} from "../../stores/autotype";
+} from "@/stores/autotype";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 interface MenuState {
   visible: boolean;
@@ -33,7 +44,6 @@ export default function SelectScreen() {
   const [menu, setMenu] = useState<MenuState>({ visible: false, x: 0, y: 0, items: [] });
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  // Refs with the latest values for the (stable) keydown listener.
   const entriesRef = useRef(entries);
   const indexRef = useRef(index);
   const menuVisibleRef = useRef(menu.visible);
@@ -113,12 +123,7 @@ export default function SelectScreen() {
     ev.stopPropagation();
     setIndex(i);
     const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-    setMenu({
-      visible: true,
-      x: Math.max(8, r.right - 150),
-      y: r.bottom + 4,
-      items: buildMenuItems(e),
-    });
+    setMenu({ visible: true, x: Math.max(8, r.right - 160), y: r.bottom + 4, items: buildMenuItems(e) });
   }
 
   function runMenuItem(item: { run: () => void }) {
@@ -133,28 +138,22 @@ export default function SelectScreen() {
   }
 
   function openMenuForSelected() {
-    const rows = listRef.current?.querySelectorAll(".select-item");
+    const rows = listRef.current?.querySelectorAll("[data-row]");
     const row = rows?.[indexRef.current] as HTMLElement | undefined;
-    const btn = row?.querySelector(".select-actions-btn") as HTMLElement | undefined;
+    const btn = row?.querySelector("[data-actions-btn]") as HTMLElement | undefined;
     const e = entriesRef.current[indexRef.current];
     if (btn && e) {
       const r = btn.getBoundingClientRect();
-      setMenu({
-        visible: true,
-        x: Math.max(8, r.right - 150),
-        y: r.bottom + 4,
-        items: buildMenuItems(e),
-      });
+      setMenu({ visible: true, x: Math.max(8, r.right - 160), y: r.bottom + 4, items: buildMenuItems(e) });
     }
   }
 
   function rowClick(ev: MouseEvent, e: EntryData) {
-    if ((ev.target as HTMLElement).closest(".select-actions-btn")) return;
+    if ((ev.target as HTMLElement).closest("[data-actions-btn]")) return;
     closeSelectView();
     typeCreds(e);
   }
 
-  // Stable keyboard handler (reads refs for fresh state).
   useEffect(() => {
     function onKeydown(e: KeyboardEvent) {
       if (menuVisibleRef.current) {
@@ -202,13 +201,11 @@ export default function SelectScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Scroll the selected row into view when the index changes.
   useEffect(() => {
-    const rows = listRef.current?.querySelectorAll(".select-item");
+    const rows = listRef.current?.querySelectorAll("[data-row]");
     (rows?.[index] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest" });
   }, [index]);
 
-  // Close the actions menu on any outside click.
   useEffect(() => {
     if (!menu.visible) return;
     const onDocClick = () => closeMenu();
@@ -217,108 +214,124 @@ export default function SelectScreen() {
   }, [menu.visible]);
 
   return (
-    <div id="screen-select" className="screen active">
-      <div className="select-screen">
-        <div className="select-header">
-          <h2 className="select-title">Auto-Type: Select</h2>
-          <div className="select-shortcuts">
-            <div>
-              <span className="sc-key">Enter</span>: Type the auto-type sequence
-            </div>
-            <div>
-              <span className="sc-key">Ctrl + Enter</span>: Only type the password
-            </div>
-            <div>
-              <span className="sc-key">Alt + Enter</span>: Only type the username
-            </div>
-            <div>
-              <span className="sc-key">Shift + Enter</span>: Other fields
-            </div>
+    <div className="flex h-screen flex-col p-6">
+      <div className="flex items-start justify-between gap-6">
+        <h2 className="text-2xl font-bold">Auto-Type: Select</h2>
+        <div className="text-muted-foreground space-y-0.5 text-right text-xs">
+          <div>
+            <span className="text-foreground font-medium">Enter</span>: Type the auto-type sequence
+          </div>
+          <div>
+            <span className="text-foreground font-medium">Ctrl + Enter</span>: Only type the password
+          </div>
+          <div>
+            <span className="text-foreground font-medium">Alt + Enter</span>: Only type the username
+          </div>
+          <div>
+            <span className="text-foreground font-medium">Shift + Enter</span>: Other fields
           </div>
         </div>
+      </div>
 
-        <div className="select-message">{message}</div>
+      <div className="text-muted-foreground my-3 text-sm">{message}</div>
 
-        <div className="select-filters">
-          {chips.map((chip) => (
-            <div
-              key={chip.id}
-              className={"select-filter" + (chip.active ? " active" : "")}
-              onClick={() => onChipClick(chip.id)}
-            >
-              <span className="sf-check">{chip.active ? "☑" : "☐"}</span>
-              <span className="sf-text">
-                {chip.label}
-                {chip.text ? ": " + chip.text : ""}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div ref={listRef} className="select-list">
-          {entries.length === 0 ? (
-            <div className="select-empty">No matching entries</div>
-          ) : (
-            <table className="select-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Username</th>
-                  <th>Website</th>
-                  <th className="actions-col">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e, i) => (
-                  <tr
-                    key={e.uuid}
-                    className={"select-item" + (i === index ? " selected" : "")}
-                    onClick={(ev) => rowClick(ev, e)}
-                    onMouseMove={() => index !== i && setIndex(i)}
-                  >
-                    <td title={e.title || ""}>{e.title || "(no title)"}</td>
-                    <td className="col-user" title={e.username || ""}>
-                      {e.username || ""}
-                    </td>
-                    <td className="col-url" title={e.url || ""}>
-                      {e.url || ""}
-                    </td>
-                    <td className="actions-cell">
-                      <button
-                        className="select-actions-btn"
-                        title="More…"
-                        onClick={(ev) => openMenu(ev, e, i)}
-                      >
-                        ⋯
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div className="select-foot">
-          <button className="btn-modal-cancel" onClick={closeSelectView}>
-            Cancel (Esc)
+      <div className="mb-3 flex flex-wrap gap-2">
+        {chips.map((chip) => (
+          <button
+            key={chip.id}
+            onClick={() => onChipClick(chip.id)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+              chip.active
+                ? "border-primary bg-primary/15 text-foreground"
+                : "text-muted-foreground hover:border-ring"
+            )}
+          >
+            <span>{chip.active ? "☑" : "☐"}</span>
+            <span>
+              {chip.label}
+              {chip.text ? ": " + chip.text : ""}
+            </span>
           </button>
-        </div>
+        ))}
+      </div>
+
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto rounded-lg border">
+        {entries.length === 0 ? (
+          <div className="text-muted-foreground p-10 text-center">No matching entries</div>
+        ) : (
+          <Table className="table-fixed">
+            <TableHeader className="bg-card sticky top-0">
+              <TableRow>
+                <TableHead>Title</TableHead>
+                <TableHead>Username</TableHead>
+                <TableHead>Website</TableHead>
+                <TableHead className="w-20 text-center">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {entries.map((e, i) => (
+                <TableRow
+                  key={e.uuid}
+                  data-row
+                  data-state={i === index ? "selected" : undefined}
+                  className="cursor-pointer"
+                  onClick={(ev) => rowClick(ev, e)}
+                  onMouseMove={() => index !== i && setIndex(i)}
+                >
+                  <TableCell className="truncate" title={e.title || ""}>
+                    {e.title || "(no title)"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground truncate" title={e.username || ""}>
+                    {e.username || ""}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground truncate" title={e.url || ""}>
+                    {e.url || ""}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Button
+                      data-actions-btn
+                      variant="ghost"
+                      size="icon-sm"
+                      title="More…"
+                      onClick={(ev) => openMenu(ev, e, i)}
+                    >
+                      <MoreHorizontal />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+
+      <div className="mt-3 flex justify-end">
+        <Button variant="outline" onClick={closeSelectView}>
+          Cancel (Esc)
+        </Button>
       </div>
 
       {menu.visible && (
         <div
-          className="select-actions-menu"
+          className="bg-popover text-popover-foreground fixed z-50 min-w-40 rounded-md border p-1 shadow-md"
           style={{ top: menu.y, left: menu.x }}
           onClick={(e) => e.stopPropagation()}
         >
           {menu.items.map((item, i) => (
-            <button key={i} className="select-actions-item" onClick={() => runMenuItem(item)}>
+            <button
+              key={i}
+              className="hover:bg-accent flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm"
+              onClick={() => runMenuItem(item)}
+            >
               {item.label}
             </button>
           ))}
-          <div className="select-actions-divider" />
-          <button className="select-actions-item" onClick={copyPassword}>
+          <div className="bg-border my-1 h-px" />
+          <button
+            className="hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
+            onClick={copyPassword}
+          >
             🔑 Copy password
           </button>
         </div>

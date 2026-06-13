@@ -1,15 +1,26 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useApp, getApp, setApp, markSyncPending } from "../../store";
-import { avatarColor } from "../../lib/avatar";
-import { showToast } from "../../stores/toast";
-import { openDeleteModal, openXmlModal } from "../../stores/modals";
-import type { EntryData, VaultData } from "../../types";
+import { ChevronDown, ChevronRight, Code2, KeyRound, RotateCcw } from "lucide-react";
+import { useApp, getApp, setApp, markSyncPending } from "@/store";
+import { avatarColor } from "@/lib/avatar";
+import { showToast } from "@/stores/toast";
+import { openDeleteModal, openXmlModal } from "@/stores/modals";
+import type { EntryData, VaultData } from "@/types";
 import AvatarInner from "./AvatarInner";
 import DetailField from "./DetailField";
 import OtpWidget from "./OtpWidget";
 import AttachmentList from "./AttachmentList";
 import EntryEditForm from "./EntryEditForm";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-muted-foreground mt-6 mb-2 border-b pb-1.5 text-xs font-semibold tracking-wider uppercase">
+      {children}
+    </div>
+  );
+}
 
 export default function EntryDetail() {
   const vaultData = useApp((s) => s.vaultData);
@@ -58,26 +69,19 @@ export default function EntryDetail() {
     }
   }
 
-  // Edit / add form
   if (editMode) {
     return (
-      <div className="vault-detail">
+      <div className="min-h-0 overflow-y-auto p-6">
         <EntryEditForm entry={entry} onDone={() => setApp({ editMode: false })} />
       </div>
     );
   }
 
-  // Empty state
   if (!entry) {
     return (
-      <div className="vault-detail">
-        <div className="detail-empty">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-          <span>Select an entry to view details</span>
-        </div>
+      <div className="text-muted-foreground/60 flex min-h-0 flex-col items-center justify-center gap-3 p-6">
+        <KeyRound className="size-12 opacity-40" />
+        <span className="text-sm">Select an entry to view details</span>
       </div>
     );
   }
@@ -86,78 +90,103 @@ export default function EntryDetail() {
   const historyDesc = [...entry.history].reverse();
 
   return (
-    <div className="vault-detail">
-      <div className="detail-title">
-        <div className="detail-avatar" style={{ background: detailBg }}>
+    <div className="min-h-0 overflow-y-auto p-6">
+      <div className="mb-6 flex items-center gap-3">
+        <div
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-lg text-white"
+          style={{ background: detailBg }}
+        >
           <AvatarInner iconId={entry.icon_id} customIconBase64={entry.custom_icon_base64} />
         </div>
-        <span style={{ flex: 1 }}>{entry.title || "(no title)"}</span>
-        <div className="detail-title-actions">
-          <button className="icon-btn" onClick={() => setApp({ editMode: true })}>
+        <span className="flex-1 truncate text-xl font-bold">{entry.title || "(no title)"}</span>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setApp({ editMode: true })}>
             Edit
-          </button>
+          </Button>
           {inRecycleBin ? (
             <>
-              <button className="btn-restore" disabled={restoring} onClick={restore}>
-                {restoring ? "Recovering…" : "Recover"}
-              </button>
-              <button className="btn-danger" onClick={() => openDeleteModal(entry, true)}>
+              <Button variant="outline" size="sm" disabled={restoring} onClick={restore}>
+                <RotateCcw /> {restoring ? "Recovering…" : "Recover"}
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => openDeleteModal(entry, true)}>
                 Delete Forever
-              </button>
+              </Button>
             </>
           ) : (
-            <button className="btn-danger" onClick={() => openDeleteModal(entry, false)}>
+            <Button variant="destructive" size="sm" onClick={() => openDeleteModal(entry, false)}>
               Delete
-            </button>
+            </Button>
           )}
         </div>
       </div>
 
-      <DetailField label="Username" value={entry.username} />
-      <DetailField label="Password" value={entry.password} isPassword />
-      <DetailField label="URL" value={entry.url} isUrl />
+      <div className="space-y-4">
+        <DetailField label="Username" value={entry.username} />
+        <DetailField label="Password" value={entry.password} isPassword />
+        <DetailField label="URL" value={entry.url} isUrl />
 
-      {entry.otp_uri && <OtpWidget otpUri={entry.otp_uri} />}
+        {entry.otp_uri && <OtpWidget otpUri={entry.otp_uri} />}
 
-      {entry.notes && (
-        <div className="detail-field">
-          <div className="detail-label">Notes</div>
-          <div className="detail-notes">{entry.notes}</div>
-        </div>
-      )}
+        {entry.notes && (
+          <div className="space-y-1.5">
+            <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Notes
+            </div>
+            <div className="font-mono-code bg-muted/40 max-h-40 overflow-y-auto rounded-md border px-3 py-2 text-sm whitespace-pre-wrap">
+              {entry.notes}
+            </div>
+          </div>
+        )}
+      </div>
 
       {entry.custom_fields.length > 0 && (
         <>
-          <div className="detail-section-header">Custom Fields</div>
-          {entry.custom_fields.map((f, i) => (
-            <DetailField key={i} label={f.name} value={f.value} isPassword={f.protected} />
-          ))}
+          <SectionHeader>Custom Fields</SectionHeader>
+          <div className="space-y-4">
+            {entry.custom_fields.map((f, i) => (
+              <DetailField key={i} label={f.name} value={f.value} isPassword={f.protected} />
+            ))}
+          </div>
         </>
       )}
 
-      {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} />}
+      {entry.attachments.length > 0 && (
+        <>
+          <SectionHeader>Attachments</SectionHeader>
+          <AttachmentList attachments={entry.attachments} />
+        </>
+      )}
 
-      <div className="detail-field">
-        <div className="detail-label">Group</div>
-        <div className="detail-group-tag">📁 {entry.group_name}</div>
+      <div className="mt-4 space-y-1.5">
+        <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+          Group
+        </div>
+        <Badge variant="outline" className="gap-1.5 px-2.5 py-1">
+          📁 {entry.group_name}
+        </Badge>
       </div>
 
       {entry.history.length > 0 && (
         <>
-          <div
-            className="detail-section-header history-toggle"
+          <button
+            className="text-muted-foreground hover:text-foreground mt-6 mb-2 flex w-full items-center justify-between border-b pb-1.5 text-xs font-semibold tracking-wider uppercase"
             onClick={() => setHistoryOpen((v) => !v)}
           >
             History ({entry.history.length})
-            <span className="history-chevron">{historyOpen ? "▼" : "▶"}</span>
-          </div>
+            {historyOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </button>
           {historyOpen && (
-            <div className="history-list">
+            <div>
               {historyDesc.map((h, i) => (
-                <div key={i} className="history-item">
-                  <span className="history-time">{h.modified}</span>
-                  <span className="history-title">{h.title || "(no title)"}</span>
-                  {h.username && <span className="history-user">{h.username}</span>}
+                <div
+                  key={i}
+                  className="flex items-baseline gap-3 border-b py-1.5 text-xs last:border-0"
+                >
+                  <span className="text-muted-foreground shrink-0">{h.modified}</span>
+                  <span className="flex-1 truncate">{h.title || "(no title)"}</span>
+                  {h.username && (
+                    <span className="text-muted-foreground shrink-0">{h.username}</span>
+                  )}
                 </div>
               ))}
             </div>
@@ -165,10 +194,10 @@ export default function EntryDetail() {
         </>
       )}
 
-      <div className="detail-meta-row">
-        <button className="btn-meta" onClick={viewXml}>
-          &lt;/&gt; View XML metadata
-        </button>
+      <div className="mt-6 flex justify-center">
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={viewXml}>
+          <Code2 /> View XML metadata
+        </Button>
       </div>
     </div>
   );
