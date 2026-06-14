@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp, setApp, applySource, flashSyncDot, setSyncDot } from "./store";
+import { getSettings } from "./stores/settings";
 import { showToast } from "./stores/toast";
 import { handleAutoType } from "./stores/autotype";
 import type { VaultSource } from "./types";
@@ -48,6 +50,18 @@ export default function App() {
           const { ok, error } = ev.payload;
           flashSyncDot(ok ? "ok" : "error");
           if (!ok) showToast("WebDAV sync failed: " + error);
+        })
+      );
+
+      // Intercept the window close: hide to the system tray when enabled
+      // (the tray icon's Open/Quit menu brings it back or exits).
+      const appWindow = getCurrentWindow();
+      unlisteners.push(
+        await appWindow.onCloseRequested((event) => {
+          if (getSettings().minimizeOnClose) {
+            event.preventDefault();
+            void appWindow.hide();
+          }
         })
       );
 

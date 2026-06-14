@@ -6,8 +6,30 @@ mod vault;
 mod webdav;
 
 use autotype::AutotypeState;
-use tauri::{Emitter, Manager};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager,
+};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+// Bring the main window back into view (from the tray or minimized).
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+// Quit cleanly: destroy webview windows before exiting so WebView2 doesn't log
+// a "Failed to unregister class Chrome_WidgetWin_0" teardown warning on Windows.
+fn quit_app(app: &tauri::AppHandle) {
+    for (_, w) in app.webview_windows() {
+        let _ = w.destroy();
+    }
+    app.exit(0);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -25,11 +47,7 @@ pub fn run() {
                         return;
                     }
                     if shortcut == &ctrl_k_h {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.unminimize();
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
+                        show_main_window(app);
                     } else if shortcut == &autotype_h {
                         // Capture the target window NOW, before we touch focus.
                         let (hwnd, title, url) = autotype::capture_foreground();
@@ -47,6 +65,36 @@ pub fn run() {
             // app still launches.
             let _ = app.global_shortcut().register(ctrl_k);
             let _ = app.global_shortcut().register(autotype_sc);
+
+            // System tray: lets "close to tray" restore or quit the app.
+            let open_i = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
+
+            let mut tray = TrayIconBuilder::with_id("main-tray")
+                .tooltip("KeeRust")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => show_main_window(app),
+                    "quit" => quit_app(app),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Left-click the tray icon to restore the window.
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

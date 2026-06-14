@@ -1,6 +1,7 @@
 import { ArrowLeft, Database, Moon, Palette, Sun } from "lucide-react";
 import { setApp, useApp, sourceLabel, lock } from "@/store";
 import { useTheme } from "@/components/theme-provider";
+import { useSettings, setSetting } from "@/stores/settings";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -25,6 +27,7 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function SettingsScreen() {
   const vaultIsLocal = useApp((s) => s.vaultIsLocal);
   const { theme, setTheme } = useTheme();
+  const minimizeOnClose = useSettings((s) => s.minimizeOnClose);
 
   return (
     <div className="bg-background h-screen overflow-y-auto">
@@ -46,9 +49,8 @@ export default function SettingsScreen() {
             <CardTitle className="flex items-center gap-2">
               <Palette className="size-4" /> Appearance
             </CardTitle>
-            <CardDescription>How KeeRust looks.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm">Theme</span>
               <div className="flex gap-1">
@@ -68,6 +70,19 @@ export default function SettingsScreen() {
                 </Button>
               </div>
             </div>
+
+            <Separator />
+
+            <label className="flex cursor-pointer items-start justify-between gap-4">
+              <span className="space-y-0.5">
+                <span className="block text-sm">Minimize the app instead of close</span>
+              </span>
+              <Checkbox
+                className="mt-0.5"
+                checked={minimizeOnClose}
+                onCheckedChange={(v) => setSetting("minimizeOnClose", v === true)}
+              />
+            </label>
           </CardContent>
         </Card>
 
@@ -76,7 +91,6 @@ export default function SettingsScreen() {
             <CardTitle className="flex items-center gap-2">
               <Database className="size-4" /> Database
             </CardTitle>
-            <CardDescription>The vault that's currently open.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Row label="Source" value={vaultIsLocal ? "Local file" : "WebDAV"} />
