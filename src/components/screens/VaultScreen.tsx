@@ -30,12 +30,10 @@ export default function VaultScreen() {
     <div className="bg-background flex h-screen">
       <VaultSidebar />
 
-      {/* Inset: header + two-pane body */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <VaultHeader />
-
+      {/* Inset: floating panels */}
+      <div className="flex min-w-0 flex-1 flex-col gap-2 py-2 pr-2">
         {bannerVisible && (
-          <div className="bg-primary/10 flex items-center justify-center gap-3 border-b px-4 py-1.5 text-sm">
+          <div className="bg-primary/10 flex items-center justify-center gap-3 rounded-lg border px-4 py-1.5 text-sm">
             Remote database was updated.
             <Button size="xs" variant="outline" onClick={reload}>
               Reload
@@ -46,9 +44,17 @@ export default function VaultScreen() {
           </div>
         )}
 
-        <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)]">
-          <EntryList />
-          <EntryDetail />
+        <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] gap-2">
+          {/* Entry list panel: toolbar + list */}
+          <div className="bg-card flex min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm">
+            <VaultHeader />
+            <EntryList />
+          </div>
+
+          {/* Detail panel */}
+          <div className="bg-card flex min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm">
+            <EntryDetail />
+          </div>
         </div>
       </div>
     </div>

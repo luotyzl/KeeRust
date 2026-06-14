@@ -71,7 +71,7 @@ export default function EntryDetail() {
 
   if (editMode) {
     return (
-      <div className="min-h-0 overflow-y-auto p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <EntryEditForm entry={entry} onDone={() => setApp({ editMode: false })} />
       </div>
     );
@@ -79,7 +79,7 @@ export default function EntryDetail() {
 
   if (!entry) {
     return (
-      <div className="text-muted-foreground/60 flex min-h-0 flex-col items-center justify-center gap-3 p-6">
+      <div className="text-muted-foreground/60 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6">
         <KeyRound className="size-12 opacity-40" />
         <span className="text-sm">Select an entry to view details</span>
       </div>
@@ -90,7 +90,7 @@ export default function EntryDetail() {
   const historyDesc = [...entry.history].reverse();
 
   return (
-    <div className="min-h-0 overflow-y-auto p-6">
+    <div className="min-h-0 flex-1 overflow-y-auto p-6">
       <div className="mb-6 flex items-center gap-3">
         <div
           className="flex size-10 shrink-0 items-center justify-center rounded-lg text-lg text-white"

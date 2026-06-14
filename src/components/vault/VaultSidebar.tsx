@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   KeyRound,
   List,
+  Lock,
   Paperclip,
   RefreshCw,
   Settings,
@@ -17,13 +18,22 @@ import {
   setApp,
   setView,
   dbName,
+  lock,
   setSyncDot,
   flashSyncDot,
 } from "@/store";
 import { showToast } from "@/stores/toast";
 import type { ActiveView, EntryData, VaultData } from "@/types";
 import { Button } from "@/components/ui/button";
+import ThemeToggle from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
+
+const DOT_CLASS: Record<string, string> = {
+  syncing: "bg-primary animate-pulse",
+  ok: "bg-success",
+  error: "bg-destructive",
+  "": "bg-transparent",
+};
 
 function sameView(a: ActiveView, b: ActiveView): boolean {
   if (a.kind !== b.kind) return false;
@@ -106,6 +116,7 @@ export default function VaultSidebar() {
   const vaultData = useApp((s) => s.vaultData);
   const activeView = useApp((s) => s.activeView);
   const vaultIsLocal = useApp((s) => s.vaultIsLocal);
+  const syncDot = useApp((s) => s.syncDot);
   const [syncing, setSyncing] = useState(false);
 
   const rbUuid = vaultData?.recycle_bin_uuid ?? null;
@@ -155,12 +166,15 @@ export default function VaultSidebar() {
     <aside className="flex w-64 shrink-0 flex-col p-2">
       <div className="bg-sidebar text-sidebar-foreground flex min-h-0 flex-1 flex-col rounded-lg border shadow-sm">
         {/* Header */}
-        <div className="flex items-center gap-2 border-b p-3">
+        <div className="flex items-center gap-1 border-b p-3">
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold" title={dbName()}>
               {dbName()}
             </div>
-            <div className="text-muted-foreground text-xs">
+            <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              {syncDot && (
+                <span className={cn("size-1.5 shrink-0 rounded-full", DOT_CLASS[syncDot])} />
+              )}
               {vaultIsLocal ? "Local vault" : "WebDAV vault"}
             </div>
           </div>
@@ -172,6 +186,9 @@ export default function VaultSidebar() {
             onClick={syncNow}
           >
             <RefreshCw className={syncing ? "animate-spin" : ""} />
+          </Button>
+          <Button variant="ghost" size="icon-sm" title="Lock vault" onClick={lock}>
+            <Lock />
           </Button>
         </div>
 
@@ -239,15 +256,16 @@ export default function VaultSidebar() {
           </Section>
         </div>
 
-        {/* Footer: Settings */}
-        <div className="p-2">
+        {/* Footer: Settings + theme */}
+        <div className="flex items-center gap-1 p-2">
           <button
             onClick={() => setApp({ screen: "settings" })}
-            className="hover:bg-sidebar-accent/50 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors"
+            className="hover:bg-sidebar-accent/50 flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors"
           >
             <Settings className="size-4 shrink-0 opacity-70" />
             <span className="flex-1">Settings</span>
           </button>
+          <ThemeToggle />
         </div>
       </div>
     </aside>

@@ -62,44 +62,60 @@ export default function EntryList() {
     return list;
   }, [vaultData, activeView, searchQuery, searchFields, searchCaseSensitive]);
 
-  if (entries.length === 0) {
-    return (
-      <div className="min-h-0 overflow-y-auto border-r">
-        <div className="text-muted-foreground p-12 text-center text-sm">
-          No entries found
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-0 overflow-y-auto border-r">
-      {entries.map((e) => {
-        const subtitle = e.username || e.url || e.group_name;
-        const bg = e.custom_icon_base64 ? "transparent" : avatarColor(e.title);
-        const active = e.uuid === selectedEntryUuid;
-        return (
-          <button
-            key={e.uuid}
-            onClick={() => setApp({ selectedEntryUuid: e.uuid })}
-            className={cn(
-              "flex w-full items-center gap-3 border-b px-3 py-2.5 text-left transition-colors",
-              active ? "bg-muted" : "hover:bg-muted/50"
-            )}
-          >
-            <div
-              className="flex size-9 shrink-0 items-center justify-center rounded-md text-base text-white"
-              style={{ background: bg }}
-            >
-              <AvatarInner iconId={e.icon_id} customIconBase64={e.custom_icon_base64} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{e.title || "(no title)"}</div>
-              <div className="text-muted-foreground truncate text-xs">{subtitle}</div>
-            </div>
-          </button>
-        );
-      })}
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
+        {/* Sticky header — stays pinned while the body scrolls. */}
+        <thead className="sticky top-0 z-10">
+          <tr>
+            <th className="bg-card text-muted-foreground h-8 border-b px-2 text-left text-xs font-medium">
+              Title
+            </th>
+            <th className="bg-card text-muted-foreground h-8 w-[38%] border-b px-2 text-left text-xs font-medium">
+              Username
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.length === 0 ? (
+            <tr>
+              <td colSpan={2} className="text-muted-foreground p-8 text-center text-sm">
+                No entries found
+              </td>
+            </tr>
+          ) : (
+            entries.map((e) => {
+              const bg = e.custom_icon_base64 ? "transparent" : avatarColor(e.title);
+              const active = e.uuid === selectedEntryUuid;
+              return (
+                <tr
+                  key={e.uuid}
+                  onClick={() => setApp({ selectedEntryUuid: e.uuid })}
+                  className={cn(
+                    "cursor-pointer transition-colors",
+                    active ? "bg-muted" : "hover:bg-muted/50"
+                  )}
+                >
+                  <td className="border-b px-2 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-[0.7rem] text-white"
+                        style={{ background: bg }}
+                      >
+                        <AvatarInner iconId={e.icon_id} customIconBase64={e.custom_icon_base64} />
+                      </div>
+                      <span className="truncate">{e.title || "(no title)"}</span>
+                    </div>
+                  </td>
+                  <td className="text-muted-foreground truncate border-b px-2 py-1.5 text-xs">
+                    {e.username}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

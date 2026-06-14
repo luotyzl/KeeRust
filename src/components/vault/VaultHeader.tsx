@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Lock, Plus, Search, SlidersHorizontal } from "lucide-react";
-import { useApp, getApp, setApp, lock } from "@/store";
+import { Plus, Search, SlidersHorizontal } from "lucide-react";
+import { useApp, getApp, setApp } from "@/store";
 import { modalStore } from "@/stores/modals";
 import type { SearchFields } from "@/types";
 import { Input } from "@/components/ui/input";
@@ -13,8 +13,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import ThemeToggle from "@/components/ThemeToggle";
-import { cn } from "@/lib/utils";
 
 const FIELD_LIST: Array<{ key: keyof SearchFields; label: string }> = [
   { key: "title", label: "Title" },
@@ -36,18 +34,11 @@ function isEditableTarget(el: Element | null): boolean {
   );
 }
 
-const DOT_CLASS: Record<string, string> = {
-  syncing: "bg-primary animate-pulse",
-  ok: "bg-success",
-  error: "bg-destructive",
-  "": "bg-transparent",
-};
-
+// Toolbar above the entry list: search + field options + New.
 export default function VaultHeader() {
   const searchQuery = useApp((s) => s.searchQuery);
   const searchFields = useApp((s) => s.searchFields);
   const searchCaseSensitive = useApp((s) => s.searchCaseSensitive);
-  const syncDot = useApp((s) => s.syncDot);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   function newEntry() {
@@ -93,8 +84,8 @@ export default function VaultHeader() {
   }, []);
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-      <div className="relative mx-1 max-w-md flex-1">
+    <div className="flex shrink-0 items-center gap-2 border-b p-2">
+      <div className="relative flex-1">
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
         <Input
           ref={searchRef}
@@ -142,17 +133,9 @@ export default function VaultHeader() {
         </DropdownMenu>
       </div>
 
-      <span
-        className={cn("size-2 shrink-0 rounded-full transition-colors", DOT_CLASS[syncDot])}
-        title="Sync status"
-      />
-      <ThemeToggle />
       <Button variant="outline" size="sm" onClick={newEntry}>
         <Plus /> New
       </Button>
-      <Button variant="outline" size="sm" onClick={lock}>
-        <Lock /> Lock
-      </Button>
-    </header>
+    </div>
   );
 }
