@@ -39,8 +39,14 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
     };
   }, [otpUri]);
 
+  // Color the Progress indicator (a child of the Root) without modifying the
+  // shadcn Progress component: target it via a descendant selector.
   const barColor =
-    remaining <= 5 ? "bg-destructive" : remaining <= 10 ? "bg-yellow-500" : "bg-primary";
+    remaining <= 5
+      ? "[&>[data-slot=progress-indicator]]:bg-destructive"
+      : remaining <= 10
+        ? "[&>[data-slot=progress-indicator]]:bg-yellow-500"
+        : "";
 
   return (
     <div className="space-y-1.5">
@@ -51,7 +57,7 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
         <span className="font-mono-code text-primary text-xl font-bold tracking-[0.15em] tabular-nums">
           {code}
         </span>
-        <Progress value={pct} className="h-1.5 flex-1" indicatorClassName={barColor} />
+        <Progress value={pct} className={"h-1.5 flex-1 " + barColor} />
         <span className="text-muted-foreground w-7 text-right text-xs tabular-nums">
           {remaining}s
         </span>

@@ -132,17 +132,14 @@
     overflow: hidden;
   }
   body {
-    background-color: var(--background);
-    color: var(--foreground);
-    font-family: system-ui, -apple-system, sans-serif;
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-mono;
   }
   html {
     @apply font-mono;
   }
 }
 
-/* Monospace helper used for secret/code values. */
+/* Secret/code values — kept as an alias so the whole app stays on one font. */
 .font-mono-code {
-  font-family: ui-monospace, "Cascadia Code", monospace;
+  @apply font-mono;
 }

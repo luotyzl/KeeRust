@@ -70,7 +70,7 @@ export default function EntryList() {
             onClick={() => setApp({ selectedEntryUuid: e.uuid })}
             className={cn(
               "flex w-full items-center gap-3 border-b px-3 py-2.5 text-left transition-colors",
-              active ? "bg-accent" : "hover:bg-muted/50"
+              active ? "bg-muted" : "hover:bg-muted/50"
             )}
           >
             <div

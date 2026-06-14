@@ -42,7 +42,7 @@ export default function IconPicker({
         type="button"
         disabled={fetching}
         onClick={getFavicon}
-        className="text-primary hover:bg-accent flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-2 text-xs disabled:opacity-60"
+        className="text-primary hover:bg-muted flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-2 text-xs disabled:opacity-60"
       >
         <Download className="size-3.5" />
         {fetching ? "Fetching favicon…" : "Download favicon from URL"}
@@ -54,8 +54,8 @@ export default function IconPicker({
             type="button"
             onClick={() => onSelectBuiltin(i)}
             className={cn(
-              "hover:bg-accent flex aspect-square items-center justify-center rounded-md border border-transparent text-base",
-              i === selectedIconId && "border-ring bg-accent"
+              "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent text-base",
+              i === selectedIconId && "border-ring bg-muted"
             )}
           >
             {emoji}

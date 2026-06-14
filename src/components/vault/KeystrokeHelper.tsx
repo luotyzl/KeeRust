@@ -25,7 +25,7 @@ function TokenLink({
 }) {
   return (
     <a
-      className="font-mono-code text-primary hover:bg-accent cursor-pointer rounded px-1 py-0.5 text-xs whitespace-nowrap"
+      className="font-mono-code text-primary hover:bg-muted cursor-pointer rounded px-1 py-0.5 text-xs whitespace-nowrap"
       onMouseDown={(e) => onPick(e, token)}
     >
       {text}
