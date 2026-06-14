@@ -1,7 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  Folder,
   KeyRound,
   List,
   Paperclip,
@@ -11,6 +10,7 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { iconEmoji } from "@/lib/icons";
 import {
   useApp,
   getApp,
@@ -32,14 +32,35 @@ function sameView(a: ActiveView, b: ActiveView): boolean {
   return true;
 }
 
+// Render a lucide icon in the menu's icon slot.
+const lucide = (Icon: LucideIcon) => <Icon className="size-4 shrink-0 opacity-70" />;
+
+// A KDBX group's own icon: custom PNG, else the built-in emoji.
+function GroupIcon({ iconId, custom }: { iconId: number; custom: string | null }) {
+  if (custom) {
+    return (
+      <img
+        className="size-4 shrink-0 rounded-sm object-contain"
+        src={`data:image/png;base64,${custom}`}
+        alt=""
+      />
+    );
+  }
+  return (
+    <span className="flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+      {iconEmoji(iconId < 0 ? 48 : iconId)}
+    </span>
+  );
+}
+
 function MenuItem({
-  icon: Icon,
+  icon,
   label,
   count,
   view,
   active,
 }: {
-  icon: LucideIcon;
+  icon: ReactNode;
   label: string;
   count?: number;
   view: ActiveView;
@@ -55,7 +76,7 @@ function MenuItem({
           : "hover:bg-sidebar-accent/50"
       )}
     >
-      <Icon className="size-4 shrink-0 opacity-70" />
+      {icon}
       <span className="flex-1 truncate">{label}</span>
       {count !== undefined && (
         <span className="text-muted-foreground text-xs tabular-nums">{count}</span>
@@ -158,21 +179,21 @@ export default function VaultSidebar() {
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
           <Section title="Quick View">
             <MenuItem
-              icon={List}
+              icon={lucide(List)}
               label="All Entries"
               count={live.length}
               view={{ kind: "all" }}
               active={sameView(activeView, { kind: "all" })}
             />
             <MenuItem
-              icon={KeyRound}
+              icon={lucide(KeyRound)}
               label="2FA codes"
               count={otpCount}
               view={{ kind: "otp" }}
               active={sameView(activeView, { kind: "otp" })}
             />
             <MenuItem
-              icon={Paperclip}
+              icon={lucide(Paperclip)}
               label="Attachments"
               count={attCount}
               view={{ kind: "attachments" }}
@@ -185,7 +206,7 @@ export default function VaultSidebar() {
               {tags.map(([tag, count]) => (
                 <MenuItem
                   key={tag}
-                  icon={Tag}
+                  icon={lucide(Tag)}
                   label={tag}
                   count={count}
                   view={{ kind: "tag", value: tag }}
@@ -199,7 +220,7 @@ export default function VaultSidebar() {
             {groups.map((g) => (
               <MenuItem
                 key={g.uuid}
-                icon={Folder}
+                icon={<GroupIcon iconId={g.icon_id} custom={g.custom_icon_base64} />}
                 label={g.name}
                 count={groupCount(g.uuid)}
                 view={{ kind: "group", uuid: g.uuid }}
@@ -208,7 +229,7 @@ export default function VaultSidebar() {
             ))}
             {rbUuid && (
               <MenuItem
-                icon={Trash2}
+                icon={lucide(Trash2)}
                 label="Recycle Bin"
                 count={recycleCount}
                 view={{ kind: "recycle" }}

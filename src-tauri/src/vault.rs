@@ -58,6 +58,8 @@ pub struct GroupData {
     pub uuid: String,
     pub name: String,
     pub entry_count: usize,
+    pub icon_id: i64,                       // built-in icon index, or -1 if custom
+    pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
 }
 
 #[derive(Serialize)]
@@ -426,6 +428,19 @@ fn entry_to_data(
     }
 }
 
+// Resolve a group's icon: built-in index, or -1 + raw bytes for a custom icon.
+// Groups default to the folder icon (48) when none is set.
+fn group_icon(g: &keepass::db::GroupRef<'_>) -> (i64, Option<String>) {
+    match g.icon() {
+        Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None),
+        Some(keepass::db::Icon::Custom(_)) => {
+            let data = g.custom_icon().map(|ci| BASE64_STANDARD.encode(&ci.data));
+            (-1, data)
+        }
+        None => (48, None),
+    }
+}
+
 // ── Tree traversal ────────────────────────────────────────────────────────────
 
 fn collect_nodes(
@@ -479,11 +494,14 @@ fn collect_nodes(
         if let Some(g) = db.group(group_id) {
             let uuid = group_id.to_string();
             let name = g.name.clone();
+            let (icon_id, custom_icon_base64) = group_icon(&g);
             let before = entries.len();
             groups.push(GroupData {
                 uuid: uuid.clone(),
                 name: name.clone(),
                 entry_count: 0,
+                icon_id,
+                custom_icon_base64,
             });
             let idx = groups.len() - 1;
             collect_nodes(&g, db, &name, &uuid, entries, groups);
@@ -496,6 +514,7 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
     let root = db.root();
     let root_uuid = root.id().to_string();
     let root_name = root.name.clone();
+    let (root_icon_id, root_custom_icon) = group_icon(&root);
 
     let recycle_bin_uuid = db
         .meta
@@ -519,6 +538,8 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
             uuid: root_uuid,
             name: root_name,
             entry_count: non_recycled,
+            icon_id: root_icon_id,
+            custom_icon_base64: root_custom_icon,
         },
     );
 

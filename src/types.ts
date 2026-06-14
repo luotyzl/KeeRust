@@ -45,6 +45,8 @@ export interface GroupData {
   uuid: string;
   name: string;
   entry_count: number;
+  icon_id: number;
+  custom_icon_base64: string | null;
 }
 
 export interface VaultData {
