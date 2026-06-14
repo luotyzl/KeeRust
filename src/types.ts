@@ -33,6 +33,7 @@ export interface EntryData {
   otp_uri: string | null;
   attachments: AttachmentInfo[];
   history: HistoryEntry[];
+  tags: string[];
   icon_id: number; // built-in icon index 0-68, or -1 if custom
   custom_icon_base64: string | null;
   autotype_enabled: boolean;
@@ -99,6 +100,15 @@ export interface SearchFields {
 }
 
 export type ScreenName = "config" | "unlock" | "vault" | "select";
+
+// Which set of entries the middle pane shows (driven by the sidebar menu).
+export type ActiveView =
+  | { kind: "all" } // Quick View → All Entries
+  | { kind: "otp" } // Quick View → 2FA codes
+  | { kind: "attachments" } // Quick View → Attachments
+  | { kind: "tag"; value: string } // a specific tag
+  | { kind: "group"; uuid: string } // a specific group
+  | { kind: "recycle" }; // Recycle Bin
 
 // ── Auto-type ──────────────────────────────────────────────────────────────
 export interface WindowInfo {

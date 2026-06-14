@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Lock, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { Lock, PanelLeft, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useApp, getApp, setApp, lock } from "@/store";
 import { modalStore } from "@/stores/modals";
 import type { SearchFields } from "@/types";
@@ -43,7 +43,11 @@ const DOT_CLASS: Record<string, string> = {
   "": "bg-transparent",
 };
 
-export default function VaultHeader() {
+export default function VaultHeader({
+  onToggleSidebar,
+}: {
+  onToggleSidebar: () => void;
+}) {
   const searchQuery = useApp((s) => s.searchQuery);
   const searchFields = useApp((s) => s.searchFields);
   const searchCaseSensitive = useApp((s) => s.searchCaseSensitive);
@@ -93,8 +97,15 @@ export default function VaultHeader() {
   }, []);
 
   return (
-    <header className="bg-card col-span-3 flex items-center gap-2 border-b px-4">
-      <span className="text-base font-bold">KeeRust</span>
+    <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title="Toggle sidebar"
+        onClick={onToggleSidebar}
+      >
+        <PanelLeft />
+      </Button>
 
       <div className="relative mx-1 max-w-md flex-1">
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />

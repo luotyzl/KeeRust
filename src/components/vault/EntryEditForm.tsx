@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Pencil, Plus, X } from "lucide-react";
-import { setApp, getApp, markSyncPending } from "@/store";
+import { setApp, getApp, markSyncPending, newEntryGroupUuid } from "@/store";
 import { showToast } from "@/stores/toast";
 import { avatarColor } from "@/lib/avatar";
 import { iconEmoji } from "@/lib/icons";
@@ -36,10 +36,10 @@ export default function EntryEditForm({
     () =>
       entry ?? {
         uuid: "",
-        group_uuid: getApp().selectedGroupUuid || getApp().vaultData?.groups[0]?.uuid || "",
+        group_uuid: newEntryGroupUuid(),
         title: "", username: "", password: "", url: "", notes: "",
         group_name: "",
-        otp_uri: null, custom_fields: [], attachments: [], history: [],
+        otp_uri: null, custom_fields: [], attachments: [], history: [], tags: [],
         icon_id: 0, custom_icon_base64: null,
         autotype_enabled: true, autotype_sequence: "", autotype_obfuscation: false,
       },

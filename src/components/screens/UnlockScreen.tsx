@@ -39,7 +39,7 @@ export default function UnlockScreen() {
       setApp({
         vaultData: vault,
         masterPassword: password,
-        selectedGroupUuid: vault.groups[0]?.uuid ?? null,
+        activeView: { kind: "all" },
         selectedEntryUuid: null,
         searchQuery: "",
         editMode: false,

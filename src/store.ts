@@ -1,5 +1,6 @@
 import { createStore } from "./lib/store";
 import type {
+  ActiveView,
   EntryData,
   ScreenName,
   SearchFields,
@@ -12,7 +13,7 @@ import type {
 interface AppState {
   screen: ScreenName;
   vaultData: VaultData | null;
-  selectedGroupUuid: string | null;
+  activeView: ActiveView;
   selectedEntryUuid: string | null;
   searchQuery: string;
   searchFields: SearchFields;
@@ -30,7 +31,7 @@ interface AppState {
 export const appStore = createStore<AppState>({
   screen: "config",
   vaultData: null,
-  selectedGroupUuid: null,
+  activeView: { kind: "all" },
   selectedEntryUuid: null,
   searchQuery: "",
   searchFields: {
@@ -92,8 +93,15 @@ export function sourceLabel(): string {
 }
 
 // ── Selection ───────────────────────────────────────────────────────────────
-export function selectGroup(uuid: string): void {
-  setApp({ selectedGroupUuid: uuid, selectedEntryUuid: null });
+export function setView(view: ActiveView): void {
+  setApp({ activeView: view, selectedEntryUuid: null });
+}
+
+// Group a newly-created entry lands in: the active group, else the root group.
+export function newEntryGroupUuid(): string {
+  const s = getApp();
+  if (s.activeView.kind === "group") return s.activeView.uuid;
+  return s.vaultData?.groups[0]?.uuid ?? "";
 }
 
 export function dbName(): string {
@@ -112,7 +120,7 @@ export function lock(): void {
     vaultData: null,
     masterPassword: "",
     editMode: false,
-    selectedGroupUuid: null,
+    activeView: { kind: "all" },
     selectedEntryUuid: null,
     searchQuery: "",
     syncBannerVisible: false,

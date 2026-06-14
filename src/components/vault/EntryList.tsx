@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 export default function EntryList() {
   const vaultData = useApp((s) => s.vaultData);
-  const selectedGroupUuid = useApp((s) => s.selectedGroupUuid);
+  const activeView = useApp((s) => s.activeView);
   const selectedEntryUuid = useApp((s) => s.selectedEntryUuid);
   const searchQuery = useApp((s) => s.searchQuery);
   const searchFields = useApp((s) => s.searchFields);
@@ -15,16 +15,30 @@ export default function EntryList() {
 
   const entries = useMemo<EntryData[]>(() => {
     if (!vaultData) return [];
-    let list = vaultData.entries;
     const rbUuid = vaultData.recycle_bin_uuid;
-    const rootUuid = vaultData.groups[0]?.uuid;
+    const live = (e: EntryData) => e.group_uuid !== rbUuid;
 
-    if (rbUuid && selectedGroupUuid === rbUuid) {
-      list = list.filter((e) => e.group_uuid === rbUuid);
-    } else if (selectedGroupUuid && selectedGroupUuid !== rootUuid) {
-      list = list.filter((e) => e.group_uuid === selectedGroupUuid);
-    } else if (rbUuid) {
-      list = list.filter((e) => e.group_uuid !== rbUuid);
+    let list: EntryData[];
+    switch (activeView.kind) {
+      case "otp":
+        list = vaultData.entries.filter((e) => live(e) && !!e.otp_uri);
+        break;
+      case "attachments":
+        list = vaultData.entries.filter((e) => live(e) && e.attachments.length > 0);
+        break;
+      case "tag":
+        list = vaultData.entries.filter((e) => live(e) && e.tags.includes(activeView.value));
+        break;
+      case "group":
+        list = vaultData.entries.filter((e) => e.group_uuid === activeView.uuid);
+        break;
+      case "recycle":
+        list = rbUuid ? vaultData.entries.filter((e) => e.group_uuid === rbUuid) : [];
+        break;
+      case "all":
+      default:
+        list = vaultData.entries.filter(live);
+        break;
     }
 
     if (searchQuery) {
@@ -46,7 +60,7 @@ export default function EntryList() {
       });
     }
     return list;
-  }, [vaultData, selectedGroupUuid, searchQuery, searchFields, searchCaseSensitive]);
+  }, [vaultData, activeView, searchQuery, searchFields, searchCaseSensitive]);
 
   if (entries.length === 0) {
     return (

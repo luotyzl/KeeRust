@@ -45,6 +45,7 @@ pub struct EntryData {
     pub otp_uri: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub history: Vec<HistoryEntry>,
+    pub tags: Vec<String>,                  // entry tags (KDBX <Tags>)
     pub icon_id: i64,                       // built-in icon index 0-68, or -1 if custom
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
     pub autotype_enabled: bool,             // whether auto-type is enabled for this entry
@@ -416,6 +417,7 @@ fn entry_to_data(
         otp_uri,
         attachments,
         history,
+        tags: entry.tags.clone(),
         icon_id,
         custom_icon_base64,
         autotype_enabled,

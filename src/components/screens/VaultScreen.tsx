@@ -1,15 +1,17 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useApp, getApp, setApp } from "@/store";
+import { getApp, setApp, useApp } from "@/store";
 import { showToast } from "@/stores/toast";
 import type { VaultData } from "@/types";
+import VaultSidebar from "@/components/vault/VaultSidebar";
 import VaultHeader from "@/components/vault/VaultHeader";
-import GroupSidebar from "@/components/vault/GroupSidebar";
 import EntryList from "@/components/vault/EntryList";
 import EntryDetail from "@/components/vault/EntryDetail";
 import { Button } from "@/components/ui/button";
 
 export default function VaultScreen() {
   const bannerVisible = useApp((s) => s.syncBannerVisible);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Banner action: reload from the (already-updated) local cache.
   async function reload() {
@@ -27,28 +29,30 @@ export default function VaultScreen() {
   }
 
   return (
-    <div className="grid h-screen grid-cols-[220px_360px_minmax(0,1fr)] grid-rows-[3rem_minmax(0,1fr)]">
-      <VaultHeader />
+    <div className="bg-background flex h-screen">
+      {sidebarOpen && <VaultSidebar />}
 
-      {bannerVisible && (
-        <div className="bg-primary/10 text-foreground fixed top-12 right-0 left-0 z-50 flex items-center justify-center gap-3 border-b px-4 py-1.5 text-sm">
-          Remote database was updated.
-          <Button size="xs" variant="outline" onClick={reload}>
-            Reload
-          </Button>
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => setApp({ syncBannerVisible: false })}
-          >
-            Dismiss
-          </Button>
+      {/* Inset: header + two-pane body */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <VaultHeader onToggleSidebar={() => setSidebarOpen((v) => !v)} />
+
+        {bannerVisible && (
+          <div className="bg-primary/10 flex items-center justify-center gap-3 border-b px-4 py-1.5 text-sm">
+            Remote database was updated.
+            <Button size="xs" variant="outline" onClick={reload}>
+              Reload
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => setApp({ syncBannerVisible: false })}>
+              Dismiss
+            </Button>
+          </div>
+        )}
+
+        <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)]">
+          <EntryList />
+          <EntryDetail />
         </div>
-      )}
-
-      <GroupSidebar />
-      <EntryList />
-      <EntryDetail />
+      </div>
     </div>
   );
 }

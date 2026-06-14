@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, ChevronRight, Code2, KeyRound, RotateCcw } from "lucide-react";
-import { useApp, getApp, setApp, markSyncPending } from "@/store";
+import { useApp, getApp, setApp, setView, markSyncPending } from "@/store";
 import { avatarColor } from "@/lib/avatar";
 import { showToast } from "@/stores/toast";
 import { openDeleteModal, openXmlModal } from "@/stores/modals";
@@ -165,6 +165,26 @@ export default function EntryDetail() {
           📁 {entry.group_name}
         </Badge>
       </div>
+
+      {entry.tags.length > 0 && (
+        <div className="mt-4 space-y-1.5">
+          <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Tags
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {entry.tags.map((t) => (
+              <Badge
+                key={t}
+                variant="secondary"
+                className="cursor-pointer"
+                onClick={() => setView({ kind: "tag", value: t })}
+              >
+                {t}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
 
       {entry.history.length > 0 && (
         <>
