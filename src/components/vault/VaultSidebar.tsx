@@ -6,6 +6,7 @@ import {
   List,
   Paperclip,
   RefreshCw,
+  Settings,
   Tag,
   Trash2,
   type LucideIcon,
@@ -205,21 +206,28 @@ export default function VaultSidebar() {
                 active={sameView(activeView, { kind: "group", uuid: g.uuid })}
               />
             ))}
+            {rbUuid && (
+              <MenuItem
+                icon={Trash2}
+                label="Recycle Bin"
+                count={recycleCount}
+                view={{ kind: "recycle" }}
+                active={sameView(activeView, { kind: "recycle" })}
+              />
+            )}
           </Section>
         </div>
 
-        {/* Footer: Recycle Bin */}
-        {rbUuid && (
-          <div className="border-t p-2">
-            <MenuItem
-              icon={Trash2}
-              label="Recycle Bin"
-              count={recycleCount}
-              view={{ kind: "recycle" }}
-              active={sameView(activeView, { kind: "recycle" })}
-            />
-          </div>
-        )}
+        {/* Footer: Settings */}
+        <div className="p-2">
+          <button
+            onClick={() => setApp({ screen: "settings" })}
+            className="hover:bg-sidebar-accent/50 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors"
+          >
+            <Settings className="size-4 shrink-0 opacity-70" />
+            <span className="flex-1">Settings</span>
+          </button>
+        </div>
       </div>
     </aside>
   );

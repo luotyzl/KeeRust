@@ -10,6 +10,7 @@ import ConfigScreen from "./components/screens/ConfigScreen";
 import UnlockScreen from "./components/screens/UnlockScreen";
 import VaultScreen from "./components/screens/VaultScreen";
 import SelectScreen from "./components/screens/SelectScreen";
+import SettingsScreen from "./components/screens/SettingsScreen";
 import ConfirmModal from "./components/modals/ConfirmModal";
 import XmlModal from "./components/modals/XmlModal";
 import { Toaster } from "./components/ui/sonner";
@@ -74,6 +75,7 @@ export default function App() {
       {screen === "config" && <ConfigScreen />}
       {screen === "unlock" && <UnlockScreen />}
       {screen === "vault" && <VaultScreen />}
+      {screen === "settings" && <SettingsScreen />}
       {screen === "select" && <SelectScreen />}
 
       <ConfirmModal />
