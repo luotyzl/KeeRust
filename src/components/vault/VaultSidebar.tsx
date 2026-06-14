@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ChevronRight,
   Folder,
   KeyRound,
   List,
@@ -71,17 +70,12 @@ function Section({
   title: string;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
   return (
     <div className="py-1">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="text-muted-foreground hover:text-foreground flex w-full items-center gap-1 px-2 py-1 text-xs font-medium tracking-wide uppercase"
-      >
-        <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
+      <div className="text-muted-foreground px-2 py-1 text-xs font-medium tracking-wide uppercase">
         {title}
-      </button>
-      {open && <div className="mt-0.5 space-y-0.5">{children}</div>}
+      </div>
+      <div className="mt-0.5 space-y-0.5">{children}</div>
     </div>
   );
 }
