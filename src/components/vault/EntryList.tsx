@@ -1,10 +1,14 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useApp, setApp } from "@/store";
 import { avatarColor } from "@/lib/avatar";
 import type { EntryData } from "@/types";
 import AvatarInner from "./AvatarInner";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+type SortColumn = "title" | "username";
+type SortDir = "asc" | "desc";
 
 export default function EntryList() {
   const vaultData = useApp((s) => s.vaultData);
@@ -13,6 +17,20 @@ export default function EntryList() {
   const searchQuery = useApp((s) => s.searchQuery);
   const searchFields = useApp((s) => s.searchFields);
   const searchCaseSensitive = useApp((s) => s.searchCaseSensitive);
+
+  // Sort state — default Title ascending. Click a header to sort by it; click
+  // the active header again to flip the direction.
+  const [sortColumn, setSortColumn] = useState<SortColumn>("title");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function toggleSort(column: SortColumn) {
+    if (column === sortColumn) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortDir("asc");
+    }
+  }
 
   const entries = useMemo<EntryData[]>(() => {
     if (!vaultData) return [];
@@ -60,8 +78,18 @@ export default function EntryList() {
         return false;
       });
     }
-    return list;
-  }, [vaultData, activeView, searchQuery, searchFields, searchCaseSensitive]);
+
+    // Sort by the chosen column (case-insensitive, with a title tiebreaker).
+    const dir = sortDir === "asc" ? 1 : -1;
+    const sorted = [...list].sort((a, b) => {
+      const av = (sortColumn === "title" ? a.title : a.username) || "";
+      const bv = (sortColumn === "title" ? b.title : b.username) || "";
+      const cmp = av.localeCompare(bv, undefined, { sensitivity: "base" });
+      if (cmp !== 0) return cmp * dir;
+      return (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }) * dir;
+    });
+    return sorted;
+  }, [vaultData, activeView, searchQuery, searchFields, searchCaseSensitive, sortColumn, sortDir]);
 
   return (
     <ScrollArea className="min-h-0 flex-1" viewportClassName="[&>div]:!block">
@@ -69,12 +97,21 @@ export default function EntryList() {
         {/* Sticky header — stays pinned while the body scrolls. */}
         <thead className="sticky top-0 z-10">
           <tr>
-            <th className="bg-card text-muted-foreground h-8 border-b px-2 text-left text-xs font-medium">
-              Title
-            </th>
-            <th className="bg-card text-muted-foreground h-8 w-[38%] border-b px-2 text-left text-xs font-medium">
-              Username
-            </th>
+            <SortHeader
+              label="Title"
+              column="title"
+              sortColumn={sortColumn}
+              sortDir={sortDir}
+              onClick={toggleSort}
+            />
+            <SortHeader
+              label="Username"
+              column="username"
+              sortColumn={sortColumn}
+              sortDir={sortDir}
+              onClick={toggleSort}
+              className="w-[38%]"
+            />
           </tr>
         </thead>
         <tbody>
@@ -118,5 +155,45 @@ export default function EntryList() {
         </tbody>
       </table>
     </ScrollArea>
+  );
+}
+
+function SortHeader({
+  label,
+  column,
+  sortColumn,
+  sortDir,
+  onClick,
+  className,
+}: {
+  label: string;
+  column: SortColumn;
+  sortColumn: SortColumn;
+  sortDir: SortDir;
+  onClick: (c: SortColumn) => void;
+  className?: string;
+}) {
+  const active = column === sortColumn;
+  return (
+    <th
+      className={cn(
+        "bg-card text-muted-foreground h-8 border-b p-0 text-left text-xs font-medium",
+        className
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onClick(column)}
+        className="hover:text-foreground flex h-8 w-full items-center gap-1 px-2 transition-colors"
+      >
+        <span>{label}</span>
+        {active &&
+          (sortDir === "asc" ? (
+            <ChevronUp className="size-3" />
+          ) : (
+            <ChevronDown className="size-3" />
+          ))}
+      </button>
+    </th>
   );
 }
