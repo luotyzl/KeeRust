@@ -8,6 +8,7 @@ import { avatarColor } from "@/lib/avatar";
 import { iconComponent } from "@/lib/icons";
 import type { SaveResult } from "@/types";
 import IconPicker from "@/components/vault/IconPicker";
+import EntryCreateForm from "./EntryCreateForm";
 import {
   Dialog,
   DialogContent,
@@ -172,16 +173,24 @@ export default function CreateModal() {
   const visible = useModals((s) => s.createVisible);
   const kind = useModals((s) => s.createKind);
 
-  const title = kind === "entry" ? "New Entry" : "New Group";
-
   return (
     <Dialog open={visible} onOpenChange={(open) => !open && closeCreateModal()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-        </DialogHeader>
-        {kind === "group" ? <GroupForm /> : <p className="text-muted-foreground text-sm">Coming soon.</p>}
-      </DialogContent>
+      {kind === "group" ? (
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Group</DialogTitle>
+          </DialogHeader>
+          <GroupForm />
+        </DialogContent>
+      ) : (
+        <DialogContent
+          showCloseButton={false}
+          className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
+        >
+          <DialogTitle className="sr-only">New Entry</DialogTitle>
+          <EntryCreateForm />
+        </DialogContent>
+      )}
     </Dialog>
   );
 }

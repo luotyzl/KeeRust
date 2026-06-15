@@ -84,6 +84,9 @@ export interface EntryUpdate {
   autotype_enabled: boolean;
   autotype_sequence: string;
   autotype_obfuscation: boolean;
+  tags?: string[];
+  expires?: boolean;
+  expiry?: string | null;
 }
 
 // Outbound payload for save_group (mirrors GroupUpdate).

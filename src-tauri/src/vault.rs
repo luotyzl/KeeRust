@@ -109,6 +109,13 @@ pub struct EntryUpdate {
     pub autotype_enabled: bool,
     pub autotype_sequence: String, // "" = inherit the global default sequence
     pub autotype_obfuscation: bool,
+    // The following are optional so older payloads leave them unchanged.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>, // None = leave existing tags untouched
+    #[serde(default)]
+    pub expires: Option<bool>, // None = leave expiry flag untouched
+    #[serde(default)]
+    pub expiry: Option<String>, // "YYYY-MM-DD" when expires is true
 }
 
 #[derive(Deserialize)]
@@ -392,6 +399,27 @@ fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
     };
     at.data_transfer_obfuscation = Some(update.autotype_obfuscation);
     entry.autotype = Some(at);
+
+    // Tags (only when provided, so older payloads preserve existing tags).
+    if let Some(tags) = &update.tags {
+        entry.tags = tags
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+    }
+
+    // Expiry (only when provided).
+    if let Some(expires) = update.expires {
+        entry.times.expires = Some(expires);
+        if expires {
+            entry.times.expiry = update
+                .expiry
+                .as_ref()
+                .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                .and_then(|d| d.and_hms_opt(0, 0, 0));
+        }
+    }
 }
 
 // ── Entry builder ─────────────────────────────────────────────────────────────
