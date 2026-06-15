@@ -11,7 +11,7 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { iconEmoji } from "@/lib/icons";
+import { iconComponent } from "@/lib/icons";
 import {
   useApp,
   getApp,
@@ -57,11 +57,8 @@ function GroupIcon({ iconId, custom }: { iconId: number; custom: string | null }
       />
     );
   }
-  return (
-    <span className="flex size-4 shrink-0 items-center justify-center text-sm leading-none">
-      {iconEmoji(iconId < 0 ? 48 : iconId)}
-    </span>
-  );
+  const Icon = iconComponent(iconId < 0 ? 48 : iconId);
+  return <Icon className="size-4 shrink-0 opacity-70" />;
 }
 
 function MenuItem({

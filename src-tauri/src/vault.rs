@@ -48,6 +48,7 @@ pub struct EntryData {
     pub tags: Vec<String>,                  // entry tags (KDBX <Tags>)
     pub icon_id: i64,                       // built-in icon index 0-68, or -1 if custom
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
+    pub custom_icon_uuid: Option<String>,   // UUID of the custom icon (for re-selection)
     pub autotype_enabled: bool,             // whether auto-type is enabled for this entry
     pub autotype_sequence: String,          // custom default keystroke sequence ("" = global default)
     pub autotype_obfuscation: bool,         // "mix real keystrokes with random" flag
@@ -62,11 +63,18 @@ pub struct GroupData {
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
 }
 
+#[derive(Serialize, Clone)]
+pub struct CustomIconData {
+    pub uuid: String,   // custom icon UUID (matches EntryData.custom_icon_uuid)
+    pub base64: String, // raw PNG data
+}
+
 #[derive(Serialize)]
 pub struct VaultData {
     pub groups: Vec<GroupData>,
     pub entries: Vec<EntryData>,
     pub recycle_bin_uuid: Option<String>,
+    pub custom_icons: Vec<CustomIconData>, // all custom icons in the DB (pickable)
 }
 
 #[derive(Serialize)]
@@ -96,7 +104,8 @@ pub struct EntryUpdate {
     pub otp_uri: String, // empty = no OTP
     pub custom_fields: Vec<CustomFieldUpdate>,
     pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave the existing icon unchanged
-    pub custom_icon_base64: Option<String>, // when set, store as a new custom icon (e.g. favicon)
+    pub custom_icon_base64: Option<String>, // when set, store as a NEW custom icon (e.g. favicon)
+    pub custom_icon_uuid: Option<String>, // when set, reference an EXISTING custom icon by UUID
     pub autotype_enabled: bool,
     pub autotype_sequence: String, // "" = inherit the global default sequence
     pub autotype_obfuscation: bool,
@@ -294,15 +303,23 @@ fn attachment_bytes(att: &keepass::db::Attachment) -> Vec<u8> {
     }
 }
 
-/// Apply the chosen icon to an entry. A supplied custom icon (e.g. a downloaded
-/// favicon) takes priority; otherwise a built-in index >= 0 is set; otherwise the
-/// existing icon is left untouched.
-fn apply_icon(e: &mut keepass::db::EntryMut<'_>, update: &EntryUpdate) -> Result<(), String> {
+/// Apply the chosen icon to an entry. Priority: a supplied custom icon (e.g. a
+/// downloaded favicon) is stored as new; otherwise an existing custom icon
+/// (resolved to `existing_custom`) is referenced; otherwise a built-in index >= 0
+/// is set; otherwise the existing icon is left untouched.
+fn apply_icon(
+    e: &mut keepass::db::EntryMut<'_>,
+    update: &EntryUpdate,
+    existing_custom: Option<keepass::db::CustomIconId>,
+) -> Result<(), String> {
     if let Some(b64) = &update.custom_icon_base64 {
         let bytes = BASE64_STANDARD
             .decode(b64)
             .map_err(|e| format!("Invalid icon data: {e}"))?;
         e.set_icon_custom_new(bytes);
+    } else if let Some(id) = existing_custom {
+        e.set_icon_custom(id)
+            .map_err(|e| format!("Custom icon not found: {e}"))?;
     } else if update.icon_id >= 0 {
         e.set_icon_builtin(update.icon_id as usize);
     }
@@ -357,6 +374,7 @@ fn entry_to_data(
     attachments: Vec<AttachmentInfo>,
     icon_id: i64,
     custom_icon_base64: Option<String>,
+    custom_icon_uuid: Option<String>,
 ) -> EntryData {
     let mut custom_fields: Vec<CustomField> = entry
         .fields
@@ -422,6 +440,7 @@ fn entry_to_data(
         tags: entry.tags.clone(),
         icon_id,
         custom_icon_base64,
+        custom_icon_uuid,
         autotype_enabled,
         autotype_sequence,
         autotype_obfuscation,
@@ -466,16 +485,16 @@ fn collect_nodes(
                 })
                 .collect();
 
-            // Resolve the entry's icon: built-in index, or raw bytes for a custom icon
-            let (icon_id, custom_icon_base64) = match e.icon() {
-                Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None),
-                Some(keepass::db::Icon::Custom(_)) => {
+            // Resolve the entry's icon: built-in index, or raw bytes + UUID for a custom icon
+            let (icon_id, custom_icon_base64, custom_icon_uuid) = match e.icon() {
+                Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None, None),
+                Some(keepass::db::Icon::Custom(id)) => {
                     let data = e
                         .custom_icon()
                         .map(|ci| BASE64_STANDARD.encode(&ci.data));
-                    (-1, data)
+                    (-1, data, Some(id.uuid().to_string()))
                 }
-                None => (0, None), // default to the key icon
+                None => (0, None, None), // default to the key icon
             };
 
             entries.push(entry_to_data(
@@ -486,6 +505,7 @@ fn collect_nodes(
                 attachments,
                 icon_id,
                 custom_icon_base64,
+                custom_icon_uuid,
             ));
         }
     }
@@ -526,6 +546,15 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
 
     collect_nodes(&*root, &db, &root_name, &root_uuid, &mut entries, &mut groups);
 
+    // All custom icons in the database — pickable for any entry/group.
+    let custom_icons: Vec<CustomIconData> = db
+        .iter_all_custom_icons()
+        .map(|ci| CustomIconData {
+            uuid: ci.id().uuid().to_string(),
+            base64: BASE64_STANDARD.encode(&ci.data),
+        })
+        .collect();
+
     // "All Entries" count excludes anything that lives in the Recycle Bin
     let non_recycled = entries
         .iter()
@@ -547,6 +576,7 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
         groups,
         entries,
         recycle_bin_uuid,
+        custom_icons,
     }
 }
 
@@ -846,6 +876,18 @@ pub async fn save_entry(
     let bytes = read_working_bytes(&app, &source).await?;
     let mut db = open_db(&bytes, &password)?;
 
+    // Resolve a "reference an existing custom icon" request (by UUID) to its
+    // CustomIconId before borrowing the entry mutably. (CustomIconId is Copy.)
+    let existing_custom: Option<keepass::db::CustomIconId> = entry
+        .custom_icon_uuid
+        .as_ref()
+        .filter(|_| entry.custom_icon_base64.is_none())
+        .and_then(|u| {
+            db.iter_all_custom_icons()
+                .find(|ci| ci.id().uuid().to_string() == *u)
+                .map(|ci| ci.id())
+        });
+
     let saved_uuid = if entry.uuid.is_empty() {
         // New entry: add to the specified group
         let group_uuid = uuid::Uuid::parse_str(&entry.group_uuid)
@@ -858,7 +900,7 @@ pub async fn save_entry(
         let id_str = e.id().to_string();
         apply_fields(&mut *e, &entry);
         // Icon must be set on the EntryMut (needs DB access for custom-icon storage)
-        apply_icon(&mut e, &entry)?;
+        apply_icon(&mut e, &entry, existing_custom)?;
         id_str
     } else {
         // Existing entry: find and update
@@ -870,7 +912,7 @@ pub async fn save_entry(
                 .entry_mut(entry_id)
                 .ok_or_else(|| "Entry not found".to_string())?;
             apply_fields(&mut *e, &entry);
-            apply_icon(&mut e, &entry)?;
+            apply_icon(&mut e, &entry, existing_custom)?;
         }
         entry.uuid.clone()
     };

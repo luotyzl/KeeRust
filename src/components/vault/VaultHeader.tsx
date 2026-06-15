@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import { Plus, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, FolderPlus, KeyRound, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useApp, getApp, setApp } from "@/store";
-import { modalStore } from "@/stores/modals";
+import { modalStore, openCreateModal } from "@/stores/modals";
 import type { SearchFields } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -40,11 +41,6 @@ export default function VaultHeader() {
   const searchFields = useApp((s) => s.searchFields);
   const searchCaseSensitive = useApp((s) => s.searchCaseSensitive);
   const searchRef = useRef<HTMLInputElement | null>(null);
-
-  function newEntry() {
-    if (!getApp().vaultData) return;
-    setApp({ selectedEntryUuid: null, editMode: true });
-  }
 
   function toggleField(key: keyof SearchFields, checked: boolean) {
     setApp({
@@ -133,9 +129,21 @@ export default function VaultHeader() {
         </DropdownMenu>
       </div>
 
-      <Button variant="outline" size="sm" onClick={newEntry}>
-        <Plus /> New
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm">
+            <Plus /> New <ChevronDown className="opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onSelect={() => openCreateModal("entry")}>
+            <KeyRound /> Entry
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openCreateModal("group")}>
+            <FolderPlus /> Group
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

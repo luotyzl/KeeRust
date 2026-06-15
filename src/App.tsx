@@ -16,6 +16,7 @@ import SelectScreen from "./components/screens/SelectScreen";
 import SettingsScreen from "./components/screens/SettingsScreen";
 import ConfirmModal from "./components/modals/ConfirmModal";
 import XmlModal from "./components/modals/XmlModal";
+import CreateModal from "./components/modals/CreateModal";
 import { Toaster } from "./components/ui/sonner";
 
 interface AutoTypePayload {
@@ -100,6 +101,7 @@ export default function App() {
 
       <ConfirmModal />
       <XmlModal />
+      <CreateModal />
       <Toaster position="bottom-center" richColors />
     </>
   );

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Pencil, Plus, X } from "lucide-react";
-import { setApp, getApp, markSyncPending, newEntryGroupUuid } from "@/store";
+import { setApp, getApp, useApp, markSyncPending, newEntryGroupUuid } from "@/store";
 import { showToast } from "@/stores/toast";
 import { avatarColor } from "@/lib/avatar";
-import { iconEmoji } from "@/lib/icons";
+import { iconComponent } from "@/lib/icons";
 import { DEFAULT_AT_SEQUENCE } from "@/lib/autotype";
 import type { CustomField, EntryData, SaveResult } from "@/types";
 import IconPicker from "./IconPicker";
@@ -40,7 +40,7 @@ export default function EntryEditForm({
         title: "", username: "", password: "", url: "", notes: "",
         group_name: "",
         otp_uri: null, custom_fields: [], attachments: [], history: [], tags: [],
-        icon_id: 0, custom_icon_base64: null,
+        icon_id: 0, custom_icon_base64: null, custom_icon_uuid: null,
         autotype_enabled: true, autotype_sequence: "", autotype_obfuscation: false,
       },
     [entry]
@@ -59,8 +59,14 @@ export default function EntryEditForm({
     base.custom_fields.map((cf) => ({ ...cf }))
   );
 
+  const customIcons = useApp((s) => s.vaultData?.custom_icons ?? []);
+
   const [selectedIconId, setSelectedIconId] = useState<number>(
     typeof base.icon_id === "number" ? base.icon_id : 0
+  );
+  // UUID of a chosen *existing* custom icon (reused by reference). null = none.
+  const [selectedCustomUuid, setSelectedCustomUuid] = useState<string | null>(
+    base.custom_icon_uuid ?? null
   );
   const [pendingCustomIcon, setPendingCustomIcon] = useState<string | null>(null);
   const existingCustomIcon = base.custom_icon_base64;
@@ -77,16 +83,29 @@ export default function EntryEditForm({
     titleRef.current?.focus();
   }, []);
 
-  const previewCustomIcon = pendingCustomIcon || (selectedIconId < 0 ? existingCustomIcon : null);
+  const customByUuid = (uuid: string | null) =>
+    uuid ? customIcons.find((c) => c.uuid === uuid)?.base64 ?? null : null;
+
+  const previewCustomIcon =
+    pendingCustomIcon ??
+    (selectedCustomUuid ? customByUuid(selectedCustomUuid) ?? existingCustomIcon : null);
   const avatarBg = previewCustomIcon ? "transparent" : avatarColor(title || "New");
 
   function pickBuiltin(id: number) {
     setSelectedIconId(id);
+    setSelectedCustomUuid(null);
+    setPendingCustomIcon(null);
+    setShowIconGrid(false);
+  }
+  function pickCustom(uuid: string) {
+    setSelectedCustomUuid(uuid);
+    setSelectedIconId(-1);
     setPendingCustomIcon(null);
     setShowIconGrid(false);
   }
   function onFavicon(b64: string) {
     setPendingCustomIcon(b64);
+    setSelectedCustomUuid(null);
     setSelectedIconId(-1);
     setShowIconGrid(false);
   }
@@ -138,6 +157,7 @@ export default function EntryEditForm({
       custom_fields: cleanFields,
       icon_id: selectedIconId,
       custom_icon_base64: pendingCustomIcon,
+      custom_icon_uuid: pendingCustomIcon ? null : selectedCustomUuid,
       autotype_enabled: atEnabled,
       autotype_sequence: atSeq.trim(),
       autotype_obfuscation: atObf,
@@ -181,7 +201,10 @@ export default function EntryEditForm({
               alt=""
             />
           ) : (
-            <span className="leading-none">{iconEmoji(selectedIconId < 0 ? 0 : selectedIconId)}</span>
+            (() => {
+              const Icon = iconComponent(selectedIconId < 0 ? 0 : selectedIconId);
+              return <Icon className="size-[55%]" />;
+            })()
           )}
           <span className="bg-primary text-primary-foreground border-background absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border-2">
             <Pencil className="size-2" />
@@ -200,8 +223,11 @@ export default function EntryEditForm({
       {showIconGrid && (
         <IconPicker
           selectedIconId={selectedIconId}
+          selectedCustomUuid={selectedCustomUuid}
+          customIcons={customIcons}
           url={url}
           onSelectBuiltin={pickBuiltin}
+          onSelectCustom={pickCustom}
           onFavicon={onFavicon}
         />
       )}

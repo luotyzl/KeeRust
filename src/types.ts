@@ -36,9 +36,15 @@ export interface EntryData {
   tags: string[];
   icon_id: number; // built-in icon index 0-68, or -1 if custom
   custom_icon_base64: string | null;
+  custom_icon_uuid: string | null;
   autotype_enabled: boolean;
   autotype_sequence: string;
   autotype_obfuscation: boolean;
+}
+
+export interface CustomIconData {
+  uuid: string;
+  base64: string;
 }
 
 export interface GroupData {
@@ -53,6 +59,7 @@ export interface VaultData {
   groups: GroupData[];
   entries: EntryData[];
   recycle_bin_uuid: string | null;
+  custom_icons: CustomIconData[];
 }
 
 export interface SaveResult {
@@ -73,6 +80,7 @@ export interface EntryUpdate {
   custom_fields: CustomField[];
   icon_id: number;
   custom_icon_base64: string | null;
+  custom_icon_uuid: string | null;
   autotype_enabled: boolean;
   autotype_sequence: string;
   autotype_obfuscation: boolean;

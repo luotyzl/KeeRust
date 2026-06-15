@@ -1,19 +1,26 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Download } from "lucide-react";
-import { ICON_EMOJI } from "@/lib/icons";
+import { ICON_COMPONENTS } from "@/lib/icons";
 import { showToast } from "@/stores/toast";
 import { cn } from "@/lib/utils";
+import type { CustomIconData } from "@/types";
 
 export default function IconPicker({
   selectedIconId,
+  selectedCustomUuid,
+  customIcons,
   url,
   onSelectBuiltin,
+  onSelectCustom,
   onFavicon,
 }: {
   selectedIconId: number;
+  selectedCustomUuid: string | null;
+  customIcons: CustomIconData[];
   url: string;
   onSelectBuiltin: (id: number) => void;
+  onSelectCustom: (uuid: string) => void;
   onFavicon: (base64: string) => void;
 }) {
   const [fetching, setFetching] = useState(false);
@@ -48,20 +55,48 @@ export default function IconPicker({
         {fetching ? "Fetching favicon…" : "Download favicon from URL"}
       </button>
       <div className="grid max-h-48 grid-cols-10 gap-1 overflow-y-auto">
-        {ICON_EMOJI.map((emoji, i) => (
+        {ICON_COMPONENTS.map((Icon, i) => (
           <button
             key={i}
             type="button"
             onClick={() => onSelectBuiltin(i)}
             className={cn(
-              "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent text-base",
-              i === selectedIconId && "border-ring bg-muted"
+              "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent",
+              i === selectedIconId && selectedCustomUuid === null && "border-ring bg-muted"
             )}
           >
-            {emoji}
+            <Icon className="size-4" />
           </button>
         ))}
       </div>
+
+      {customIcons.length > 0 && (
+        <>
+          <div className="text-muted-foreground px-0.5 text-[0.65rem] font-medium tracking-wide uppercase">
+            Custom icons
+          </div>
+          <div className="grid max-h-32 grid-cols-10 gap-1 overflow-y-auto">
+            {customIcons.map((ci) => (
+              <button
+                key={ci.uuid}
+                type="button"
+                title="Custom icon"
+                onClick={() => onSelectCustom(ci.uuid)}
+                className={cn(
+                  "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent p-0.5",
+                  ci.uuid === selectedCustomUuid && "border-ring bg-muted"
+                )}
+              >
+                <img
+                  className="size-full rounded-sm object-contain"
+                  src={`data:image/png;base64,${ci.base64}`}
+                  alt=""
+                />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
