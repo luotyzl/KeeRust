@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Settings } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { setApp, sourceLabel } from "@/store";
 import { resumePendingAutotype } from "@/stores/autotype";
@@ -72,7 +73,7 @@ export default function UnlockScreen() {
               {sourceLabel()}
             </p>
           )}
-          <form className="space-y-4" noValidate onSubmit={submit}>
+          <form id="unlock-form" className="space-y-4" noValidate onSubmit={submit}>
             <div className="space-y-1.5">
               <Label htmlFor="master-pass">Master Password</Label>
               <Input
@@ -85,18 +86,24 @@ export default function UnlockScreen() {
               />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
-            <Button type="submit" className="w-full" disabled={unlocking}>
-              {unlocking ? "Unlocking…" : "Unlock"}
-            </Button>
           </form>
         </CardContent>
-        <CardFooter className="justify-center">
+        <CardFooter className="gap-2">
           <Button
-            variant="link"
-            className="text-muted-foreground"
-            onClick={() => setApp({ screen: "config" })}
+            type="submit"
+            form="unlock-form"
+            className="flex-1"
+            disabled={unlocking}
           >
-            Change database
+            {unlocking ? "Unlocking…" : "Unlock"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            onClick={() => setApp({ screen: "settings" })}
+          >
+            <Settings /> Settings
           </Button>
         </CardFooter>
       </Card>

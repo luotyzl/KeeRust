@@ -9,9 +9,21 @@ use autotype::AutotypeState;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+// Allow navigation only within the app's own pages (prod: tauri://localhost /
+// https://tauri.localhost; dev: http://localhost:<port>). Everything else is
+// blocked — the desktop equivalent of KeeWeb's Electron `will-navigate` guard,
+// so a stray link or dropped file can't replace the SPA.
+fn is_app_url(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" => true,
+        "http" | "https" => matches!(url.host_str(), Some("localhost") | Some("tauri.localhost")),
+        _ => false,
+    }
+}
 
 // Bring the main window back into view (from the tray or minimized).
 fn show_main_window(app: &tauri::AppHandle) {
@@ -61,6 +73,18 @@ pub fn run() {
         )
         .manage(AutotypeState::default())
         .setup(move |app| {
+            // Create the main window in code (instead of tauri.conf) so we can
+            // lock it down like KeeWeb does at the app level: disable the
+            // WebView's built-in zoom hotkeys (Ctrl +/-/0 and Ctrl+wheel) and
+            // refuse to navigate away from the app's own pages.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title("KeeRust")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .zoom_hotkeys_enabled(false)
+                .on_navigation(is_app_url)
+                .build()?;
+
             // Ignore failures (e.g. a shortcut already taken system-wide) so the
             // app still launches.
             let _ = app.global_shortcut().register(ctrl_k);

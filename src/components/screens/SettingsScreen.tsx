@@ -9,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
@@ -26,8 +26,13 @@ function Row({ label, value }: { label: string; value: string }) {
 
 export default function SettingsScreen() {
   const vaultIsLocal = useApp((s) => s.vaultIsLocal);
+  const hasVault = useApp((s) => s.vaultData != null);
   const { theme, setTheme } = useTheme();
   const minimizeOnClose = useSettings((s) => s.minimizeOnClose);
+
+  // Settings is reachable both from the unlocked vault and the unlock screen;
+  // go back to wherever we came from.
+  const back = () => setApp({ screen: hasVault ? "vault" : "unlock" });
 
   return (
     <div className="bg-background flex h-screen flex-col">
@@ -36,7 +41,7 @@ export default function SettingsScreen() {
           variant="ghost"
           size="icon-sm"
           title="Back"
-          onClick={() => setApp({ screen: "vault" })}
+          onClick={back}
         >
           <ArrowLeft />
         </Button>
@@ -74,14 +79,13 @@ export default function SettingsScreen() {
 
             <Separator />
 
-            <label className="flex cursor-pointer items-start justify-between gap-4">
+            <label className="flex cursor-pointer items-center justify-between gap-4">
               <span className="space-y-0.5">
                 <span className="block text-sm">Minimize the app instead of close</span>
               </span>
-              <Checkbox
-                className="mt-0.5"
+              <Switch
                 checked={minimizeOnClose}
-                onCheckedChange={(v) => setSetting("minimizeOnClose", v === true)}
+                onCheckedChange={(v) => setSetting("minimizeOnClose", v)}
               />
             </label>
           </CardContent>
@@ -101,9 +105,11 @@ export default function SettingsScreen() {
               <Button variant="outline" size="sm" onClick={() => setApp({ screen: "config" })}>
                 Change database
               </Button>
-              <Button variant="outline" size="sm" onClick={lock}>
-                Lock vault
-              </Button>
+              {hasVault && (
+                <Button variant="outline" size="sm" onClick={lock}>
+                  Lock vault
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
