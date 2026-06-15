@@ -13,6 +13,7 @@ import AttachmentList from "./AttachmentList";
 import EntryEditForm from "./EntryEditForm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
@@ -71,9 +72,11 @@ export default function EntryDetail() {
 
   if (editMode) {
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
-        <EntryEditForm entry={entry} onDone={() => setApp({ editMode: false })} />
-      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="p-6">
+          <EntryEditForm entry={entry} onDone={() => setApp({ editMode: false })} />
+        </div>
+      </ScrollArea>
     );
   }
 
@@ -90,7 +93,8 @@ export default function EntryDetail() {
   const historyDesc = [...entry.history].reverse();
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-6">
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="p-6">
       <div className="mb-6 flex items-center gap-3">
         <div
           className="flex size-10 shrink-0 items-center justify-center rounded-lg text-lg text-white"
@@ -219,6 +223,7 @@ export default function EntryDetail() {
           <Code2 /> View XML metadata
         </Button>
       </div>
-    </div>
+      </div>
+    </ScrollArea>
   );
 }

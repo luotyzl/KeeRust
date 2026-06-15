@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -30,8 +30,8 @@ export default function SettingsScreen() {
   const minimizeOnClose = useSettings((s) => s.minimizeOnClose);
 
   return (
-    <div className="bg-background h-screen overflow-y-auto">
-      <header className="bg-background sticky top-0 z-10 flex h-12 items-center gap-2 border-b px-3">
+    <div className="bg-background flex h-screen flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
         <Button
           variant="ghost"
           size="icon-sm"
@@ -43,6 +43,7 @@ export default function SettingsScreen() {
         <span className="text-sm font-semibold">Settings</span>
       </header>
 
+      <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto max-w-2xl space-y-4 p-6">
         <Card>
           <CardHeader>
@@ -117,6 +118,7 @@ export default function SettingsScreen() {
           </CardContent>
         </Card>
       </div>
+      </ScrollArea>
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { showToast } from "@/stores/toast";
 import type { ActiveView, EntryData, VaultData } from "@/types";
 import { Button } from "@/components/ui/button";
 import ThemeToggle from "@/components/ThemeToggle";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 const DOT_CLASS: Record<string, string> = {
@@ -193,7 +194,8 @@ export default function VaultSidebar() {
         </div>
 
         {/* Scrollable menu */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="px-2 py-1">
           <Section title="Quick View">
             <MenuItem
               icon={lucide(List)}
@@ -254,7 +256,8 @@ export default function VaultSidebar() {
               />
             )}
           </Section>
-        </div>
+          </div>
+        </ScrollArea>
 
         {/* Footer: Settings + theme */}
         <div className="flex items-center gap-1 p-2">

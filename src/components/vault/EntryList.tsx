@@ -4,6 +4,7 @@ import { avatarColor } from "@/lib/avatar";
 import type { EntryData } from "@/types";
 import AvatarInner from "./AvatarInner";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function EntryList() {
   const vaultData = useApp((s) => s.vaultData);
@@ -63,7 +64,7 @@ export default function EntryList() {
   }, [vaultData, activeView, searchQuery, searchFields, searchCaseSensitive]);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <ScrollArea className="min-h-0 flex-1" viewportClassName="[&>div]:!block">
       <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
         {/* Sticky header — stays pinned while the body scrolls. */}
         <thead className="sticky top-0 z-10">
@@ -116,6 +117,6 @@ export default function EntryList() {
           )}
         </tbody>
       </table>
-    </div>
+    </ScrollArea>
   );
 }

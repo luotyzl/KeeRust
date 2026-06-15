@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 interface MenuState {
@@ -256,7 +257,11 @@ export default function SelectScreen() {
         ))}
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto rounded-lg border">
+      <ScrollArea
+        className="min-h-0 flex-1 rounded-lg border"
+        viewportClassName="[&>div]:!block [&_[data-slot=table-container]]:overflow-visible"
+      >
+        <div ref={listRef}>
         {entries.length === 0 ? (
           <div className="text-muted-foreground p-10 text-center">No matching entries</div>
         ) : (
@@ -304,7 +309,8 @@ export default function SelectScreen() {
             </TableBody>
           </Table>
         )}
-      </div>
+        </div>
+      </ScrollArea>
 
       <div className="mt-3 flex justify-end">
         <Button variant="outline" onClick={closeSelectView}>
