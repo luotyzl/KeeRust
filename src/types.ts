@@ -86,6 +86,16 @@ export interface EntryUpdate {
   autotype_obfuscation: boolean;
 }
 
+// Outbound payload for save_group (mirrors GroupUpdate).
+export interface GroupUpdate {
+  uuid: string;
+  parent_uuid: string;
+  name: string;
+  icon_id: number;
+  custom_icon_base64: string | null;
+  custom_icon_uuid: string | null;
+}
+
 // get_vault_source returns a tagged union (serde tag = "type").
 export type VaultSource =
   | { type: "webdav"; url: string; username: string; password: string }

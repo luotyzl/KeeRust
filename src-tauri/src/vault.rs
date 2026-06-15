@@ -111,6 +111,16 @@ pub struct EntryUpdate {
     pub autotype_obfuscation: bool,
 }
 
+#[derive(Deserialize)]
+pub struct GroupUpdate {
+    pub uuid: String,        // empty = new group
+    pub parent_uuid: String, // parent for a new group (empty = root)
+    pub name: String,
+    pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave existing / custom
+    pub custom_icon_base64: Option<String>, // when set, store as a NEW custom icon
+    pub custom_icon_uuid: Option<String>, // when set, reference an EXISTING custom icon by UUID
+}
+
 // ── Cache path ────────────────────────────────────────────────────────────────
 
 fn cache_path(app: &tauri::AppHandle) -> std::path::PathBuf {
@@ -322,6 +332,26 @@ fn apply_icon(
             .map_err(|e| format!("Custom icon not found: {e}"))?;
     } else if update.icon_id >= 0 {
         e.set_icon_builtin(update.icon_id as usize);
+    }
+    Ok(())
+}
+
+/// Apply the chosen icon to a group (same priority as `apply_icon` for entries).
+fn apply_group_icon(
+    g: &mut keepass::db::GroupMut<'_>,
+    update: &GroupUpdate,
+    existing_custom: Option<keepass::db::CustomIconId>,
+) -> Result<(), String> {
+    if let Some(b64) = &update.custom_icon_base64 {
+        let bytes = BASE64_STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Invalid icon data: {e}"))?;
+        g.set_icon_custom_new(bytes);
+    } else if let Some(id) = existing_custom {
+        g.set_icon_custom(id)
+            .map_err(|e| format!("Custom icon not found: {e}"))?;
+    } else if update.icon_id >= 0 {
+        g.set_icon_builtin(update.icon_id as usize);
     }
     Ok(())
 }
@@ -934,6 +964,81 @@ pub async fn save_entry(
     };
 
     // Persist: local writes synchronously, WebDAV caches + PUTs in the background.
+    persist_bytes(&app, &source, saved_bytes).await?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn save_group(
+    app: tauri::AppHandle,
+    password: String,
+    group: GroupUpdate,
+) -> Result<SaveResult, String> {
+    let source = load_source(&app)?;
+
+    let bytes = read_working_bytes(&app, &source).await?;
+    let mut db = open_db(&bytes, &password)?;
+
+    // Resolve a "reuse existing custom icon" request (by UUID) before mut-borrowing.
+    let existing_custom: Option<keepass::db::CustomIconId> = group
+        .custom_icon_uuid
+        .as_ref()
+        .filter(|_| group.custom_icon_base64.is_none())
+        .and_then(|u| {
+            db.iter_all_custom_icons()
+                .find(|ci| ci.id().uuid().to_string() == *u)
+                .map(|ci| ci.id())
+        });
+
+    let name = group.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Group name is required".to_string());
+    }
+
+    let saved_uuid = if group.uuid.is_empty() {
+        // New group under the given parent (or root).
+        let parent_id = if group.parent_uuid.is_empty() {
+            db.root().id()
+        } else {
+            let pu = uuid::Uuid::parse_str(&group.parent_uuid)
+                .map_err(|e| format!("Invalid parent UUID: {e}"))?;
+            keepass::db::GroupId::from_uuid(pu)
+        };
+        let mut parent = db
+            .group_mut(parent_id)
+            .ok_or_else(|| "Parent group not found".to_string())?;
+        let mut g = parent.add_group();
+        g.name = name;
+        apply_group_icon(&mut g, &group, existing_custom)?;
+        g.id().to_string()
+    } else {
+        let gu = uuid::Uuid::parse_str(&group.uuid)
+            .map_err(|e| format!("Invalid group UUID: {e}"))?;
+        let gid = keepass::db::GroupId::from_uuid(gu);
+        {
+            let mut g = db
+                .group_mut(gid)
+                .ok_or_else(|| "Group not found".to_string())?;
+            g.name = name;
+            apply_group_icon(&mut g, &group, existing_custom)?;
+        }
+        group.uuid.clone()
+    };
+
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut saved_bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to save: {e}"))?;
+
+    let db2 = open_db(&saved_bytes, &password)?;
+    let result = SaveResult {
+        vault: build_vault_data(db2),
+        saved_uuid,
+    };
+
     persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(result)

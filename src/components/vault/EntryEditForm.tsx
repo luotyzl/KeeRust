@@ -14,6 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
@@ -190,7 +197,7 @@ export default function EntryEditForm({
         <button
           type="button"
           title="Change icon"
-          onClick={() => setShowIconGrid((v) => !v)}
+          onClick={() => setShowIconGrid(true)}
           className="relative flex size-10 shrink-0 items-center justify-center rounded-lg text-lg text-white transition hover:brightness-110"
           style={{ background: avatarBg }}
         >
@@ -220,17 +227,27 @@ export default function EntryEditForm({
         />
       </div>
 
-      {showIconGrid && (
-        <IconPicker
-          selectedIconId={selectedIconId}
-          selectedCustomUuid={selectedCustomUuid}
-          customIcons={customIcons}
-          url={url}
-          onSelectBuiltin={pickBuiltin}
-          onSelectCustom={pickCustom}
-          onFavicon={onFavicon}
-        />
-      )}
+      <Dialog open={showIconGrid} onOpenChange={setShowIconGrid}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Select Icon</DialogTitle>
+          </DialogHeader>
+          <IconPicker
+            selectedIconId={selectedIconId}
+            selectedCustomUuid={selectedCustomUuid}
+            customIcons={customIcons}
+            url={url}
+            onSelectBuiltin={pickBuiltin}
+            onSelectCustom={pickCustom}
+            onFavicon={onFavicon}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowIconGrid(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <SectionHeader>Credentials</SectionHeader>
       <div className="space-y-3">

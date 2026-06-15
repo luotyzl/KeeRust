@@ -139,6 +139,7 @@ pub fn run() {
             vault::restore_entry,
             vault::delete_entry_permanent,
             vault::save_entry,
+            vault::save_group,
             vault::get_entry_xml,
             favicon::fetch_favicon,
             autotype::autotype_run,

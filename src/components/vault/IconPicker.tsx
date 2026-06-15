@@ -45,15 +45,17 @@ export default function IconPicker({
 
   return (
     <div className="bg-muted/40 mt-2 space-y-2 rounded-md border p-2">
-      <button
-        type="button"
-        disabled={fetching}
-        onClick={getFavicon}
-        className="text-primary hover:bg-muted flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-2 text-xs disabled:opacity-60"
-      >
-        <Download className="size-3.5" />
-        {fetching ? "Fetching favicon…" : "Download favicon from URL"}
-      </button>
+      {url.trim() && (
+        <button
+          type="button"
+          disabled={fetching}
+          onClick={getFavicon}
+          className="text-primary hover:bg-muted flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-2 text-xs disabled:opacity-60"
+        >
+          <Download className="size-3.5" />
+          {fetching ? "Fetching favicon…" : "Download favicon from URL"}
+        </button>
+      )}
       <div className="grid max-h-48 grid-cols-10 gap-1 overflow-y-auto">
         {ICON_COMPONENTS.map((Icon, i) => (
           <button
