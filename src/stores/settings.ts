@@ -5,12 +5,21 @@ import { createStore } from "@/lib/store";
 export interface AppSettings {
   // When true, closing the window minimizes it instead of quitting.
   minimizeOnClose: boolean;
+  // Auto-lock the vault after this many minutes of inactivity (0 = never).
+  autoLockIdleMinutes: number;
+  // Auto-lock when the window is minimized / hidden to the tray.
+  autoLockOnMinimize: boolean;
+  // Auto-lock when the OS session locks or the computer sleeps.
+  autoLockOnSystemLock: boolean;
 }
 
 const STORAGE_KEY = "keerust-settings";
 
 const DEFAULTS: AppSettings = {
   minimizeOnClose: false,
+  autoLockIdleMinutes: 0,
+  autoLockOnMinimize: false,
+  autoLockOnSystemLock: false,
 };
 
 function load(): AppSettings {

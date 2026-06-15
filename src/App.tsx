@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp, setApp, applySource, flashSyncDot, setSyncDot } from "./store";
 import { getSettings } from "./stores/settings";
+import { installAutoLock, lockOnMinimizeIfEnabled } from "./lib/autolock";
 import { showToast } from "./stores/toast";
 import { handleAutoType } from "./stores/autotype";
 import type { VaultSource } from "./types";
@@ -53,6 +54,9 @@ export default function App() {
         })
       );
 
+      // Auto-lock: inactivity timer + minimize + OS-lock triggers.
+      unlisteners.push(await installAutoLock());
+
       // Intercept the window close: hide to the system tray when enabled
       // (the tray icon's Open/Quit menu brings it back or exits).
       const appWindow = getCurrentWindow();
@@ -61,6 +65,8 @@ export default function App() {
           if (getSettings().minimizeOnClose) {
             event.preventDefault();
             void appWindow.hide();
+            // Hiding to the tray counts as minimizing — lock if enabled.
+            lockOnMinimizeIfEnabled();
           }
         })
       );

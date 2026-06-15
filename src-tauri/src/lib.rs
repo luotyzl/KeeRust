@@ -2,6 +2,8 @@ mod attachments;
 mod autotype;
 mod favicon;
 mod source;
+#[cfg(windows)]
+mod syslock;
 mod vault;
 mod webdav;
 
@@ -77,13 +79,19 @@ pub fn run() {
             // lock it down like KeeWeb does at the app level: disable the
             // WebView's built-in zoom hotkeys (Ctrl +/-/0 and Ctrl+wheel) and
             // refuse to navigate away from the app's own pages.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("KeeRust")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
                 .zoom_hotkeys_enabled(false)
                 .on_navigation(is_app_url)
                 .build()?;
+
+            // Watch for OS session lock / sleep → emits "os-lock" to the frontend.
+            #[cfg(windows)]
+            syslock::watch(&main_window);
+            #[cfg(not(windows))]
+            let _ = &main_window;
 
             // Ignore failures (e.g. a shortcut already taken system-wide) so the
             // app still launches.
