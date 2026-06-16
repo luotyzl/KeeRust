@@ -1,16 +1,15 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, ChevronRight, Code2, KeyRound, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronRight, Code2, KeyRound, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useApp, getApp, setApp, setView, markSyncPending } from "@/store";
 import { avatarColor } from "@/lib/avatar";
 import { showToast } from "@/stores/toast";
-import { openDeleteModal, openXmlModal } from "@/stores/modals";
+import { openDeleteModal, openEditEntryModal, openXmlModal } from "@/stores/modals";
 import type { EntryData, VaultData } from "@/types";
 import AvatarInner from "./AvatarInner";
 import DetailField from "./DetailField";
 import OtpWidget from "./OtpWidget";
 import AttachmentList from "./AttachmentList";
-import EntryEditForm from "./EntryEditForm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,7 +25,6 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 export default function EntryDetail() {
   const vaultData = useApp((s) => s.vaultData);
   const selectedEntryUuid = useApp((s) => s.selectedEntryUuid);
-  const editMode = useApp((s) => s.editMode);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
@@ -70,16 +68,6 @@ export default function EntryDetail() {
     }
   }
 
-  if (editMode) {
-    return (
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="p-6">
-          <EntryEditForm entry={entry} onDone={() => setApp({ editMode: false })} />
-        </div>
-      </ScrollArea>
-    );
-  }
-
   if (!entry) {
     return (
       <div className="text-muted-foreground/60 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6">
@@ -95,31 +83,56 @@ export default function EntryDetail() {
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="p-6">
-      <div className="mb-6 flex items-center gap-3">
+      <div className="mb-6 flex items-start gap-3">
         <div
           className="flex size-10 shrink-0 items-center justify-center rounded-lg text-lg text-white"
           style={{ background: detailBg }}
         >
           <AvatarInner iconId={entry.icon_id} customIconBase64={entry.custom_icon_base64} />
         </div>
-        <span className="flex-1 truncate text-xl font-bold">{entry.title || "(no title)"}</span>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setApp({ editMode: true })}>
-            Edit
-          </Button>
+        <span className="min-w-0 flex-1 self-center text-xl font-bold break-words">
+          {entry.title || "(no title)"}
+        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
           {inRecycleBin ? (
             <>
-              <Button variant="outline" size="sm" disabled={restoring} onClick={restore}>
-                <RotateCcw /> {restoring ? "Recovering…" : "Recover"}
+              <Button
+                variant="outline"
+                size="icon"
+                title={restoring ? "Recovering…" : "Recover"}
+                disabled={restoring}
+                onClick={restore}
+              >
+                <RotateCcw />
               </Button>
-              <Button variant="destructive" size="sm" onClick={() => openDeleteModal(entry, true)}>
-                Delete Forever
+              <Button
+                variant="destructive"
+                size="icon"
+                title="Delete Forever"
+                onClick={() => openDeleteModal(entry, true)}
+              >
+                <Trash2 />
               </Button>
             </>
           ) : (
-            <Button variant="destructive" size="sm" onClick={() => openDeleteModal(entry, false)}>
-              Delete
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="icon"
+                title="Edit"
+                onClick={() => openEditEntryModal(entry)}
+              >
+                <Pencil />
+              </Button>
+              <Button
+                variant="destructive"
+                size="icon"
+                title="Delete"
+                onClick={() => openDeleteModal(entry, false)}
+              >
+                <Trash2 />
+              </Button>
+            </>
           )}
         </div>
       </div>

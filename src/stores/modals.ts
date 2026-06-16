@@ -11,6 +11,8 @@ interface ModalState {
   xmlContent: string;
   createVisible: boolean;
   createKind: CreateKind;
+  // When set, the create-entry dialog opens in edit mode for this entry.
+  createEntry: EntryData | null;
 }
 
 export const modalStore = createStore<ModalState>({
@@ -21,12 +23,18 @@ export const modalStore = createStore<ModalState>({
   xmlContent: "",
   createVisible: false,
   createKind: "entry",
+  createEntry: null,
 });
 
 export const useModals = modalStore.use;
 
 export function openCreateModal(kind: CreateKind): void {
-  modalStore.setState({ createKind: kind, createVisible: true });
+  modalStore.setState({ createKind: kind, createEntry: null, createVisible: true });
+}
+
+// Open the entry dialog pre-filled to edit an existing entry.
+export function openEditEntryModal(entry: EntryData): void {
+  modalStore.setState({ createKind: "entry", createEntry: entry, createVisible: true });
 }
 
 export function closeCreateModal(): void {

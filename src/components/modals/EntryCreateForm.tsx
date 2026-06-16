@@ -24,7 +24,7 @@ import {
   estimateStrength,
   type GenOptions,
 } from "@/lib/password";
-import type { CustomField, GroupData, SaveResult } from "@/types";
+import type { CustomField, EntryData, EntryUpdate, GroupData, SaveResult } from "@/types";
 import IconPicker from "@/components/vault/IconPicker";
 import KeystrokeHelper from "@/components/vault/KeystrokeHelper";
 import {
@@ -75,7 +75,8 @@ function GroupOptionIcon({ g }: { g: GroupData }) {
   return <Icon className="size-4 shrink-0 opacity-70" />;
 }
 
-export default function EntryCreateForm() {
+export default function EntryCreateForm({ entry }: { entry?: EntryData | null }) {
+  const isEdit = !!entry;
   const vaultData = useApp((s) => s.vaultData);
   const customIcons = useApp((s) => s.vaultData?.custom_icons ?? []);
 
@@ -84,37 +85,55 @@ export default function EntryCreateForm() {
     [vaultData]
   );
 
-  const [title, setTitle] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [url, setUrl] = useState("");
-  const [email, setEmail] = useState("");
-  const [notes, setNotes] = useState("");
-  const [groupUuid, setGroupUuid] = useState(newEntryGroupUuid());
-  const [favorite, setFavorite] = useState(false);
-  const [tags, setTags] = useState("");
+  // "Email" is shown in its own row and "Favorite" as the star — pull them out
+  // of the editable custom-fields / tags lists when pre-filling for edit.
+  const initialEmail =
+    entry?.custom_fields.find((f) => f.name.toLowerCase() === "email")?.value ?? "";
+
+  const [title, setTitle] = useState(entry?.title ?? "");
+  const [username, setUsername] = useState(entry?.username ?? "");
+  const [password, setPassword] = useState(entry?.password ?? "");
+  const [url, setUrl] = useState(entry?.url ?? "");
+  const [email, setEmail] = useState(initialEmail);
+  const [notes, setNotes] = useState(entry?.notes ?? "");
+  const [groupUuid, setGroupUuid] = useState(entry?.group_uuid ?? newEntryGroupUuid());
+  const [favorite, setFavorite] = useState(entry?.tags.includes("Favorite") ?? false);
+  const [tags, setTags] = useState(
+    (entry?.tags ?? []).filter((t) => t !== "Favorite").join(", ")
+  );
 
   const [showPassword, setShowPassword] = useState(false);
   const [genOpts, setGenOpts] = useState<GenOptions>(DEFAULT_GEN);
 
-  const [showOtp, setShowOtp] = useState(false);
-  const [otpUri, setOtpUri] = useState("");
+  const [showOtp, setShowOtp] = useState(!!entry?.otp_uri);
+  const [otpUri, setOtpUri] = useState(entry?.otp_uri ?? "");
 
   const [expires, setExpires] = useState(false);
   const [expiryDate, setExpiryDate] = useState("");
 
-  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [customFields, setCustomFields] = useState<CustomField[]>(
+    (entry?.custom_fields ?? [])
+      .filter((f) => f.name.toLowerCase() !== "email")
+      .map((f) => ({ ...f }))
+  );
+  // Indices of protected custom fields whose value is currently revealed.
+  const [revealedFields, setRevealedFields] = useState<Set<number>>(new Set());
 
   // Icon
-  const [selectedIconId, setSelectedIconId] = useState(0);
-  const [selectedCustomUuid, setSelectedCustomUuid] = useState<string | null>(null);
+  const [selectedIconId, setSelectedIconId] = useState(
+    typeof entry?.icon_id === "number" ? entry.icon_id : 0
+  );
+  const [selectedCustomUuid, setSelectedCustomUuid] = useState<string | null>(
+    entry?.custom_icon_uuid ?? null
+  );
   const [pendingCustomIcon, setPendingCustomIcon] = useState<string | null>(null);
+  const existingCustomIcon = entry?.custom_icon_base64 ?? null;
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
 
   // Auto-type
-  const [atEnabled, setAtEnabled] = useState(true);
-  const [atSeq, setAtSeq] = useState("");
-  const [atObf, setAtObf] = useState(false);
+  const [atEnabled, setAtEnabled] = useState(entry?.autotype_enabled !== false);
+  const [atSeq, setAtSeq] = useState(entry?.autotype_sequence ?? "");
+  const [atObf, setAtObf] = useState(entry?.autotype_obfuscation ?? false);
   const [showHelper, setShowHelper] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
 
@@ -129,7 +148,12 @@ export default function EntryCreateForm() {
   const customByUuid = (uuid: string | null) =>
     uuid ? customIcons.find((c) => c.uuid === uuid)?.base64 ?? null : null;
   const previewCustomIcon =
-    pendingCustomIcon ?? (selectedCustomUuid ? customByUuid(selectedCustomUuid) : null);
+    pendingCustomIcon ??
+    (selectedCustomUuid
+      ? customByUuid(selectedCustomUuid) ?? existingCustomIcon
+      : selectedIconId < 0
+        ? existingCustomIcon
+        : null);
   const avatarBg = previewCustomIcon ? "transparent" : avatarColor(title || "New");
 
   const strength = estimateStrength(password);
@@ -167,6 +191,15 @@ export default function EntryCreateForm() {
     setCustomFields((prev) => prev.map((cf, idx) => (idx === i ? { ...cf, ...patch } : cf)));
   }
 
+  function toggleReveal(i: number) {
+    setRevealedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
   function insertToken(token: string) {
     const input = seqRef.current;
     const start = input?.selectionStart ?? atSeq.length;
@@ -201,36 +234,42 @@ export default function EntryCreateForm() {
       .filter(Boolean);
     if (favorite && !tagList.includes("Favorite")) tagList.push("Favorite");
 
+    const payload: EntryUpdate = {
+      uuid: entry?.uuid ?? "",
+      group_uuid: groupUuid,
+      title: t,
+      username,
+      password,
+      url,
+      notes,
+      otp_uri: showOtp ? otpUri.trim() : "",
+      custom_fields: fields,
+      icon_id: selectedIconId,
+      custom_icon_base64: pendingCustomIcon,
+      custom_icon_uuid: pendingCustomIcon ? null : selectedCustomUuid,
+      autotype_enabled: atEnabled,
+      autotype_sequence: atSeq.trim(),
+      autotype_obfuscation: atObf,
+      tags: tagList,
+    };
+    // Only touch the expiry when the user set one — otherwise an existing
+    // entry's expiry is left unchanged (backend treats these as Option).
+    if (expires) {
+      payload.expires = true;
+      payload.expiry = expiryDate;
+    }
+
     setSaving(true);
     try {
       const result = await invoke<SaveResult>("save_entry", {
         password: getApp().masterPassword,
-        entry: {
-          uuid: "",
-          group_uuid: groupUuid,
-          title: t,
-          username,
-          password,
-          url,
-          notes,
-          otp_uri: showOtp ? otpUri.trim() : "",
-          custom_fields: fields,
-          icon_id: selectedIconId,
-          custom_icon_base64: pendingCustomIcon,
-          custom_icon_uuid: pendingCustomIcon ? null : selectedCustomUuid,
-          autotype_enabled: atEnabled,
-          autotype_sequence: atSeq.trim(),
-          autotype_obfuscation: atObf,
-          tags: tagList,
-          expires,
-          expiry: expires ? expiryDate : null,
-        },
+        entry: payload,
       });
       setApp({ vaultData: result.vault, selectedEntryUuid: result.saved_uuid });
       if (groupUuid) setView({ kind: "group", uuid: groupUuid });
       setApp({ selectedEntryUuid: result.saved_uuid });
       markSyncPending();
-      showToast("Entry added");
+      showToast(isEdit ? "Entry saved" : "Entry added");
       closeCreateModal();
     } catch (err) {
       showToast("Save failed: " + String(err));
@@ -589,13 +628,28 @@ export default function EntryCreateForm() {
                       placeholder="Name"
                       autoComplete="off"
                     />
-                    <Input
-                      className="flex-1"
-                      value={cf.value}
-                      onChange={(e) => setCf(i, { value: e.target.value })}
-                      placeholder="Value"
-                      autoComplete="off"
-                    />
+                    <div className="relative flex-1">
+                      <Input
+                        type={cf.protected && !revealedFields.has(i) ? "password" : "text"}
+                        className={cf.protected ? "pr-8" : ""}
+                        value={cf.value}
+                        onChange={(e) => setCf(i, { value: e.target.value })}
+                        placeholder="Value"
+                        autoComplete="off"
+                      />
+                      {cf.protected && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="absolute top-1/2 right-0.5 -translate-y-1/2"
+                          title={revealedFields.has(i) ? "Hide" : "Show"}
+                          onClick={() => toggleReveal(i)}
+                        >
+                          {revealedFields.has(i) ? <EyeOff /> : <Eye />}
+                        </Button>
+                      )}
+                    </div>
                     <label className="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">
                       <Checkbox
                         checked={cf.protected}

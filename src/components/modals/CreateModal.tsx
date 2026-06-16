@@ -168,6 +168,7 @@ function GroupForm() {
 export default function CreateModal() {
   const visible = useModals((s) => s.createVisible);
   const kind = useModals((s) => s.createKind);
+  const editEntry = useModals((s) => s.createEntry);
 
   return (
     <Dialog open={visible} onOpenChange={(open) => !open && closeCreateModal()}>
@@ -184,8 +185,8 @@ export default function CreateModal() {
           onInteractOutside={(e) => e.preventDefault()}
           className="grid max-h-[90vh] w-[95vw] grid-rows-[1fr_auto] gap-0 overflow-hidden p-0 sm:max-w-[95vw]"
         >
-          <DialogTitle className="sr-only">New Entry</DialogTitle>
-          <EntryCreateForm />
+          <DialogTitle className="sr-only">{editEntry ? "Edit Entry" : "New Entry"}</DialogTitle>
+          <EntryCreateForm entry={editEntry} />
         </DialogContent>
       )}
     </Dialog>
