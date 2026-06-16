@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CalendarPlus,
+  ChevronDown,
   Copy,
   Eye,
   EyeOff,
-  Pencil,
   Plus,
   RefreshCw,
   SlidersHorizontal,
@@ -37,6 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -115,6 +116,7 @@ export default function EntryCreateForm() {
   const [atSeq, setAtSeq] = useState("");
   const [atObf, setAtObf] = useState(false);
   const [showHelper, setShowHelper] = useState(false);
+  const [atOpen, setAtOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
 
@@ -238,9 +240,12 @@ export default function EntryCreateForm() {
 
   return (
     <>
-      <div className="grid flex-1 grid-cols-2 gap-6 overflow-y-auto p-5">
+      <ScrollArea type="auto" className="min-h-0">
+        <div className="grid grid-cols-2 gap-6 p-5">
         {/* LEFT COLUMN */}
         <div className="space-y-4">
+          {/* Session: details (title → tags) */}
+          <div className="space-y-4 rounded-xl bg-muted/50 p-4">
           {/* Icon + Title + Favorite */}
           <div className="flex items-center gap-2">
             <button
@@ -262,9 +267,6 @@ export default function EntryCreateForm() {
                   return <Icon className="size-[55%]" />;
                 })()
               )}
-              <span className="bg-primary text-primary-foreground border-background absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border-2">
-                <Pencil className="size-2" />
-              </span>
             </button>
             <Input
               ref={titleRef}
@@ -476,36 +478,55 @@ export default function EntryCreateForm() {
               autoComplete="off"
             />
           </div>
+          </div>
 
-          {/* Auto-Type (replaces SSH Key) */}
-          <div className="space-y-2">
-            <FieldLabel>Auto-Type</FieldLabel>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={atEnabled} onCheckedChange={(v) => setAtEnabled(v === true)} />
-              Enable auto-type for this entry
-            </label>
-            <div className="relative">
-              <Input
-                ref={seqRef}
-                value={atSeq}
-                onChange={(e) => setAtSeq(e.target.value)}
-                placeholder={DEFAULT_AT_SEQUENCE}
-                autoComplete="off"
-                disabled={!atEnabled}
-                onFocus={() => setShowHelper(true)}
-                onBlur={() => setTimeout(() => setShowHelper(false), 150)}
+          {/* Session: Auto-Type (replaces SSH Key) — collapsible */}
+          <div className="space-y-2 rounded-xl bg-muted/50 p-4">
+            <button
+              type="button"
+              onClick={() => setAtOpen((v) => !v)}
+              className="flex w-full items-center justify-between"
+            >
+              <FieldLabel>Auto-Type</FieldLabel>
+              <ChevronDown
+                className={
+                  "text-muted-foreground size-4 transition-transform " +
+                  (atOpen ? "rotate-180" : "")
+                }
               />
-              {showHelper && atEnabled && <KeystrokeHelper onInsert={insertToken} />}
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={atObf} onCheckedChange={(v) => setAtObf(v === true)} />
-              Mix real keystrokes with random
-            </label>
+            </button>
+            {atOpen && (
+              <div className="space-y-2 pt-1">
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={atEnabled} onCheckedChange={(v) => setAtEnabled(v === true)} />
+                  Enable auto-type for this entry
+                </label>
+                <div className="relative">
+                  <Input
+                    ref={seqRef}
+                    value={atSeq}
+                    onChange={(e) => setAtSeq(e.target.value)}
+                    placeholder={DEFAULT_AT_SEQUENCE}
+                    autoComplete="off"
+                    disabled={!atEnabled}
+                    onFocus={() => setShowHelper(true)}
+                    onBlur={() => setTimeout(() => setShowHelper(false), 150)}
+                  />
+                  {showHelper && atEnabled && <KeystrokeHelper onInsert={insertToken} />}
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={atObf} onCheckedChange={(v) => setAtObf(v === true)} />
+                  Mix real keystrokes with random
+                </label>
+              </div>
+            )}
           </div>
         </div>
 
         {/* RIGHT COLUMN */}
         <div className="space-y-4">
+          {/* Session: Group + Notes */}
+          <div className="space-y-4 rounded-xl bg-muted/50 p-4">
           {/* Group */}
           <div className="space-y-1.5">
             <FieldLabel>Group</FieldLabel>
@@ -535,9 +556,10 @@ export default function EntryCreateForm() {
               className="min-h-44"
             />
           </div>
+          </div>
 
-          {/* Custom Fields */}
-          <div className="space-y-2">
+          {/* Session: Custom Fields */}
+          <div className="space-y-2 rounded-xl bg-muted/50 p-4">
             <div className="flex items-center justify-between">
               <FieldLabel>Custom Fields</FieldLabel>
               <Button
@@ -595,17 +617,18 @@ export default function EntryCreateForm() {
             )}
           </div>
 
-          {/* Attachments */}
-          <div className="space-y-2">
+          {/* Session: Attachments */}
+          <div className="space-y-2 rounded-xl bg-muted/50 p-4">
             <FieldLabel>Attachments</FieldLabel>
             <p className="text-muted-foreground rounded-md border border-dashed p-3 text-center text-xs">
               Attachments can be added after the entry is created.
             </p>
           </div>
         </div>
-      </div>
+        </div>
+      </ScrollArea>
 
-      <DialogFooter className="border-t p-3">
+      <DialogFooter className="m-0 border-t p-3">
         <Button variant="outline" disabled={saving} onClick={closeCreateModal}>
           Cancel
         </Button>

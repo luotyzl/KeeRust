@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Pencil } from "lucide-react";
 import { setApp, getApp, setView, markSyncPending, useApp } from "@/store";
 import { showToast } from "@/stores/toast";
 import { useModals, closeCreateModal } from "@/stores/modals";
@@ -114,9 +113,6 @@ function GroupForm() {
               return <Icon className="size-[55%]" />;
             })()
           )}
-          <span className="bg-primary text-primary-foreground border-background absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border-2">
-            <Pencil className="size-2" />
-          </span>
         </button>
         <div className="flex-1 space-y-1.5">
           <Label htmlFor="group-name">Group name</Label>
@@ -176,7 +172,7 @@ export default function CreateModal() {
   return (
     <Dialog open={visible} onOpenChange={(open) => !open && closeCreateModal()}>
       {kind === "group" ? (
-        <DialogContent>
+        <DialogContent onInteractOutside={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>New Group</DialogTitle>
           </DialogHeader>
@@ -185,7 +181,8 @@ export default function CreateModal() {
       ) : (
         <DialogContent
           showCloseButton={false}
-          className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
+          onInteractOutside={(e) => e.preventDefault()}
+          className="grid max-h-[90vh] w-[95vw] grid-rows-[1fr_auto] gap-0 overflow-hidden p-0 sm:max-w-[95vw]"
         >
           <DialogTitle className="sr-only">New Entry</DialogTitle>
           <EntryCreateForm />
