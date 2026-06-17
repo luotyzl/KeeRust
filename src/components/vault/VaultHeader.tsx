@@ -1,10 +1,20 @@
 import { useEffect, useRef } from "react";
-import { ChevronDown, FolderPlus, KeyRound, Plus, Search, SlidersHorizontal } from "lucide-react";
+import {
+  ChevronDown,
+  FolderPlus,
+  KeyRound,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
 import { useApp, getApp, setApp } from "@/store";
 import { modalStore, openCreateModal } from "@/stores/modals";
+import { copyText } from "@/stores/toast";
 import type { SearchFields } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import PasswordGenerator from "@/components/vault/PasswordGenerator";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -128,6 +138,12 @@ export default function VaultHeader() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <PasswordGenerator onApply={(pw) => copyText(pw, "Password")}>
+        <Button variant="ghost" size="icon-sm" title="Generate password">
+          <Sparkles />
+        </Button>
+      </PasswordGenerator>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

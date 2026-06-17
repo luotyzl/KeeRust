@@ -1,41 +1,125 @@
-// Small client-side password generator + strength estimate for the entry form.
+// Client-side password generator + strength estimate for the entry form.
+// Character ranges and presets mirror KeeWeb's generator.
 
-const LOWER = "abcdefghijklmnopqrstuvwxyz";
-const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const DIGITS = "0123456789";
-const SYMBOLS = "!@#$%^&*()-_=+[]{};:,.?";
+export const CharRanges = {
+  // "I"/"O" omitted from upper, "l"/"o" from lower, "0" from digits to avoid
+  // the visually ambiguous characters (those live in the `ambiguous` range).
+  upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+  lower: "abcdefghijkmnpqrstuvwxyz",
+  digits: "123456789",
+  special: "!@#$%^&*_+-=,./?;:`\"~'\\",
+  brackets: "(){}[]<>",
+  high: "¡¢£¤¥¦§©ª«¬®¯°±²³´µ¶¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþ",
+  ambiguous: "O0oIl",
+} as const;
+
+export type RangeKey = keyof typeof CharRanges;
+
+export const RANGE_KEYS: RangeKey[] = [
+  "upper",
+  "lower",
+  "digits",
+  "special",
+  "brackets",
+  "high",
+  "ambiguous",
+];
 
 export interface GenOptions {
   length: number;
-  lower: boolean;
   upper: boolean;
+  lower: boolean;
   digits: boolean;
-  symbols: boolean;
+  special: boolean;
+  brackets: boolean;
+  high: boolean;
+  ambiguous: boolean;
 }
 
 export const DEFAULT_GEN: GenOptions = {
   length: 20,
-  lower: true,
   upper: true,
+  lower: true,
   digits: true,
-  symbols: true,
+  special: false,
+  brackets: false,
+  high: false,
+  ambiguous: false,
 };
 
-export function generatePassword(opts: GenOptions): string {
-  let pool = "";
-  if (opts.lower) pool += LOWER;
-  if (opts.upper) pool += UPPER;
-  if (opts.digits) pool += DIGITS;
-  if (opts.symbols) pool += SYMBOLS;
-  if (!pool) pool = LOWER + UPPER + DIGITS;
+export interface Preset extends GenOptions {
+  name: string;
+  title: string;
+}
 
-  const out: string[] = [];
-  const rnd = new Uint32Array(opts.length);
-  crypto.getRandomValues(rnd);
+const base: Omit<GenOptions, "length"> = {
+  upper: false,
+  lower: false,
+  digits: false,
+  special: false,
+  brackets: false,
+  high: false,
+  ambiguous: false,
+};
+
+export const PRESETS: Preset[] = [
+  { name: "Default", title: "Default", ...base, length: 16, upper: true, lower: true, digits: true },
+  {
+    name: "Strong",
+    title: "Strong",
+    ...base,
+    length: 24,
+    upper: true,
+    lower: true,
+    digits: true,
+    special: true,
+    brackets: true,
+  },
+  {
+    name: "Long",
+    title: "Long",
+    ...base,
+    length: 32,
+    upper: true,
+    lower: true,
+    digits: true,
+  },
+  { name: "PIN", title: "PIN", ...base, length: 4, digits: true },
+  { name: "Hex", title: "Hex", ...base, length: 32, upper: true, digits: true },
+];
+
+// Uniform random integer in [0, n) via rejection sampling (no modulo bias).
+function randomInt(n: number): number {
+  if (n <= 1) return 0;
+  const max = Math.floor(256 / n) * n;
+  const buf = new Uint8Array(1);
+  let v: number;
+  do {
+    crypto.getRandomValues(buf);
+    v = buf[0];
+  } while (v >= max);
+  return v % n;
+}
+
+export function generatePassword(opts: GenOptions): string {
+  const ranges = RANGE_KEYS.filter((k) => opts[k]).map((k) => CharRanges[k]);
+  if (!ranges.length || opts.length <= 0) return "";
+
+  const combined = ranges.join("");
+  const chars: string[] = [];
   for (let i = 0; i < opts.length; i++) {
-    out.push(pool[rnd[i] % pool.length]);
+    // Guarantee at least one character from each selected range, then fill the
+    // rest from the combined pool.
+    const pool = i < ranges.length ? ranges[i] : combined;
+    chars.push(pool[randomInt(pool.length)]);
   }
-  return out.join("");
+
+  // Fisher–Yates shuffle so the guaranteed characters aren't always up front.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
 }
 
 export interface Strength {

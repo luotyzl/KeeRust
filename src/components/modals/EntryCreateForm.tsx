@@ -7,9 +7,7 @@ import {
   Eye,
   EyeOff,
   Plus,
-  RefreshCw,
-  SlidersHorizontal,
-  Star,
+  Sparkles,
   X,
 } from "lucide-react";
 import { getApp, setApp, useApp, setView, markSyncPending, newEntryGroupUuid } from "@/store";
@@ -18,14 +16,10 @@ import { closeCreateModal } from "@/stores/modals";
 import { avatarColor } from "@/lib/avatar";
 import { iconComponent } from "@/lib/icons";
 import { DEFAULT_AT_SEQUENCE } from "@/lib/autotype";
-import {
-  DEFAULT_GEN,
-  generatePassword,
-  estimateStrength,
-  type GenOptions,
-} from "@/lib/password";
+import { estimateStrength } from "@/lib/password";
 import type { CustomField, EntryData, EntryUpdate, GroupData, SaveResult } from "@/types";
 import IconPicker from "@/components/vault/IconPicker";
+import PasswordGenerator from "@/components/vault/PasswordGenerator";
 import KeystrokeHelper from "@/components/vault/KeystrokeHelper";
 import {
   Dialog,
@@ -46,16 +40,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <div className="text-muted-foreground text-xs font-semibold">{children}</div>;
@@ -97,13 +81,13 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
   const [email, setEmail] = useState(initialEmail);
   const [notes, setNotes] = useState(entry?.notes ?? "");
   const [groupUuid, setGroupUuid] = useState(entry?.group_uuid ?? newEntryGroupUuid());
-  const [favorite, setFavorite] = useState(entry?.tags.includes("Favorite") ?? false);
+  // Preserve an existing "Favorite" tag through edits (no toggle in the dialog).
+  const favorite = entry?.tags.includes("Favorite") ?? false;
   const [tags, setTags] = useState(
     (entry?.tags ?? []).filter((t) => t !== "Favorite").join(", ")
   );
 
   const [showPassword, setShowPassword] = useState(false);
-  const [genOpts, setGenOpts] = useState<GenOptions>(DEFAULT_GEN);
 
   const [showOtp, setShowOtp] = useState(!!entry?.otp_uri);
   const [otpUri, setOtpUri] = useState(entry?.otp_uri ?? "");
@@ -177,14 +161,9 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
     setIconDialogOpen(false);
   }
 
-  function regenerate(opts = genOpts) {
-    setPassword(generatePassword(opts));
+  function applyGeneratedPassword(pw: string) {
+    setPassword(pw);
     setShowPassword(true);
-  }
-  function setGen(patch: Partial<GenOptions>) {
-    const next = { ...genOpts, ...patch };
-    setGenOpts(next);
-    regenerate(next);
   }
 
   function setCf(i: number, patch: Partial<CustomField>) {
@@ -315,15 +294,6 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
               autoComplete="off"
               className="h-9 flex-1 text-base font-semibold"
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              title={favorite ? "Unfavorite" : "Favorite"}
-              onClick={() => setFavorite((v) => !v)}
-            >
-              <Star className={favorite ? "fill-yellow-400 text-yellow-400" : ""} />
-            </Button>
           </div>
 
           {/* Username */}
@@ -346,64 +316,16 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
                 >
                   <Copy />
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon-sm" title="Generator options">
-                      <SlidersHorizontal />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuLabel>Length</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={String(genOpts.length)}
-                      onValueChange={(v) => setGen({ length: Number(v) })}
-                    >
-                      {[12, 16, 20, 24, 32].map((n) => (
-                        <DropdownMenuRadioItem key={n} value={String(n)}>
-                          {n} characters
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuCheckboxItem
-                      checked={genOpts.upper}
-                      onCheckedChange={(c) => setGen({ upper: c === true })}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      Uppercase
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem
-                      checked={genOpts.lower}
-                      onCheckedChange={(c) => setGen({ lower: c === true })}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      Lowercase
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem
-                      checked={genOpts.digits}
-                      onCheckedChange={(c) => setGen({ digits: c === true })}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      Digits
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem
-                      checked={genOpts.symbols}
-                      onCheckedChange={(c) => setGen({ symbols: c === true })}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      Symbols
-                    </DropdownMenuCheckboxItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Generate password"
-                  onClick={() => regenerate()}
-                >
-                  <RefreshCw />
-                </Button>
+                <PasswordGenerator onApply={applyGeneratedPassword}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Generate password"
+                  >
+                    <Sparkles />
+                  </Button>
+                </PasswordGenerator>
               </div>
             </div>
             <div className="relative">
