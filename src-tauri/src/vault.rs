@@ -52,6 +52,8 @@ pub struct EntryData {
     pub autotype_enabled: bool,             // whether auto-type is enabled for this entry
     pub autotype_sequence: String,          // custom default keystroke sequence ("" = global default)
     pub autotype_obfuscation: bool,         // "mix real keystrokes with random" flag
+    pub created: String,                    // creation time, RFC3339 UTC ("" if unknown)
+    pub modified: String,                   // last modification time, RFC3339 UTC ("" if unknown)
 }
 
 #[derive(Serialize, Clone)]
@@ -482,6 +484,12 @@ fn entry_to_data(
         })
         .unwrap_or_default();
 
+    // KDBX stores times in UTC; emit RFC3339 so the frontend can localize them.
+    let fmt_time = |t: Option<chrono::NaiveDateTime>| {
+        t.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or_default()
+    };
+
     EntryData {
         uuid: entry_uuid.to_string(),
         title: get_field(entry, "Title"),
@@ -502,6 +510,8 @@ fn entry_to_data(
         autotype_enabled,
         autotype_sequence,
         autotype_obfuscation,
+        created: fmt_time(entry.times.creation),
+        modified: fmt_time(entry.times.last_modification),
     }
 }
 

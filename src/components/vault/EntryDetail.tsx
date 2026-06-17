@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, ChevronRight, Code2, KeyRound, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useApp, getApp, setApp, setView, markSyncPending } from "@/store";
 import { avatarColor } from "@/lib/avatar";
+import { formatDateTime } from "@/lib/format";
 import { showToast } from "@/stores/toast";
 import { openDeleteModal, openEditEntryModal, openXmlModal } from "@/stores/modals";
 import type { EntryData, VaultData } from "@/types";
@@ -16,8 +17,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-muted-foreground mt-6 mb-2 border-b pb-1.5 text-xs font-semibold tracking-wider uppercase">
+    <div className="text-foreground mt-6 mb-3 border-b pb-1.5 text-sm font-semibold">
       {children}
+    </div>
+  );
+}
+
+function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b py-1.5 text-sm last:border-0">
+      <span className="text-muted-foreground shrink-0">{label}</span>
+      <span className={"truncate text-right " + (mono ? "font-mono-code text-xs" : "")}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -125,6 +137,14 @@ export default function EntryDetail() {
                 <Pencil />
               </Button>
               <Button
+                variant="outline"
+                size="icon"
+                title="View XML metadata"
+                onClick={viewXml}
+              >
+                <Code2 />
+              </Button>
+              <Button
                 variant="destructive"
                 size="icon"
                 title="Delete"
@@ -137,18 +157,17 @@ export default function EntryDetail() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-5">
         <DetailField label="Username" value={entry.username} />
         <DetailField label="Password" value={entry.password} isPassword />
-        <DetailField label="URL" value={entry.url} isUrl />
 
         {entry.otp_uri && <OtpWidget otpUri={entry.otp_uri} />}
 
+        <DetailField label="URL" value={entry.url} isUrl />
+
         {entry.notes && (
-          <div className="space-y-1.5">
-            <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-              Notes
-            </div>
+          <div className="space-y-1">
+            <div className="text-muted-foreground text-xs">Notes</div>
             <div className="font-mono-code bg-muted/40 max-h-40 overflow-y-auto rounded-md border px-3 py-2 text-sm whitespace-pre-wrap">
               {entry.notes}
             </div>
@@ -161,7 +180,7 @@ export default function EntryDetail() {
           <SectionHeader>Custom Fields</SectionHeader>
           <div className="space-y-4">
             {entry.custom_fields.map((f, i) => (
-              <DetailField key={i} label={f.name} value={f.value} isPassword={f.protected} />
+              <DetailField key={i} label={f.name} value={f.value} isPassword={f.protected} noStrength />
             ))}
           </div>
         </>
@@ -174,13 +193,12 @@ export default function EntryDetail() {
         </>
       )}
 
-      <div className="mt-4 space-y-1.5">
-        <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-          Group
-        </div>
-        <Badge variant="outline" className="gap-1.5 px-2.5 py-1">
-          📁 {entry.group_name}
-        </Badge>
+      <SectionHeader>Metadata</SectionHeader>
+      <div>
+        <MetaRow label="ID" value={entry.uuid} mono />
+        <MetaRow label="Created" value={formatDateTime(entry.created)} />
+        <MetaRow label="Modified" value={formatDateTime(entry.modified)} />
+        <MetaRow label="Group" value={entry.group_name} />
       </div>
 
       {entry.tags.length > 0 && (
@@ -230,12 +248,6 @@ export default function EntryDetail() {
           )}
         </>
       )}
-
-      <div className="mt-6 flex justify-center">
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={viewXml}>
-          <Code2 /> View XML metadata
-        </Button>
-      </div>
       </div>
     </ScrollArea>
   );

@@ -154,8 +154,11 @@ export function estimateStrength(pw: string): Strength {
   } else if (bits < 80) {
     label = "Good";
     color = "bg-lime-500";
-  } else {
+  } else if (bits < 120) {
     label = "Strong";
+    color = "bg-green-500";
+  } else {
+    label = "Very Strong";
     color = "bg-green-500";
   }
 

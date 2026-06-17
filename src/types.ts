@@ -40,6 +40,8 @@ export interface EntryData {
   autotype_enabled: boolean;
   autotype_sequence: string;
   autotype_obfuscation: boolean;
+  created: string; // RFC3339 UTC, "" if unknown
+  modified: string; // RFC3339 UTC, "" if unknown
 }
 
 export interface CustomIconData {
