@@ -57,7 +57,7 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
           {display}
         </span>
         <div className="flex items-center gap-0.5">
-          <div className="relative flex size-7 items-center justify-center" title={`${remaining}s`}>
+          <div className="flex size-7 items-center justify-center" title={`${remaining}s`}>
             <svg className="size-7 -rotate-90" viewBox="0 0 24 24">
               <circle
                 cx="12"
@@ -81,9 +81,6 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
                 strokeDashoffset={C * (1 - frac)}
               />
             </svg>
-            <span className="text-muted-foreground absolute text-[0.55rem] tabular-nums">
-              {remaining}
-            </span>
           </div>
           <Button
             variant="ghost"

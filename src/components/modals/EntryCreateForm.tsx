@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  CalendarPlus,
   ChevronDown,
   Copy,
   Eye,
@@ -20,6 +19,7 @@ import { estimateStrength } from "@/lib/password";
 import type { CustomField, EntryData, EntryUpdate, GroupData, SaveResult } from "@/types";
 import IconPicker from "@/components/vault/IconPicker";
 import PasswordGenerator from "@/components/vault/PasswordGenerator";
+import DateTimePicker from "@/components/vault/DateTimePicker";
 import KeystrokeHelper from "@/components/vault/KeystrokeHelper";
 import {
   Dialog,
@@ -92,8 +92,8 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
   const [showOtp, setShowOtp] = useState(!!entry?.otp_uri);
   const [otpUri, setOtpUri] = useState(entry?.otp_uri ?? "");
 
-  const [expires, setExpires] = useState(false);
-  const [expiryDate, setExpiryDate] = useState("");
+  // Expiry is "on" whenever a date is set; no separate toggle.
+  const [expiryDate, setExpiryDate] = useState(entry?.expiry ?? "");
 
   const [customFields, setCustomFields] = useState<CustomField[]>(
     (entry?.custom_fields ?? [])
@@ -231,10 +231,11 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
       autotype_obfuscation: atObf,
       tags: tagList,
     };
-    // Only touch the expiry when the user set one — otherwise an existing
-    // entry's expiry is left unchanged (backend treats these as Option).
+    // Expiry derives from whether a date is set, so it can be set, changed, or
+    // cleared (prefilled from the entry on edit).
+    const expires = !!expiryDate;
+    payload.expires = expires;
     if (expires) {
-      payload.expires = true;
       payload.expiry = expiryDate;
     }
 
@@ -408,24 +409,25 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
               )}
             </div>
             <div className="space-y-1.5">
-              <FieldLabel>Expires</FieldLabel>
-              {expires ? (
-                <Input
-                  type="date"
-                  value={expiryDate}
-                  onChange={(e) => setExpiryDate(e.target.value)}
-                />
-              ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-primary -ml-2"
-                  onClick={() => setExpires(true)}
-                >
-                  <CalendarPlus /> Set an Expiry Date
-                </Button>
-              )}
+              <div className="flex items-center justify-between">
+                <FieldLabel>Expires</FieldLabel>
+                {expiryDate && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Remove expiry"
+                    onClick={() => setExpiryDate("")}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+              <DateTimePicker
+                value={expiryDate}
+                onChange={setExpiryDate}
+                placeholder="Set an expiry date"
+              />
             </div>
           </div>
 

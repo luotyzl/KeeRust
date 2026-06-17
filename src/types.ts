@@ -42,6 +42,8 @@ export interface EntryData {
   autotype_obfuscation: boolean;
   created: string; // RFC3339 UTC, "" if unknown
   modified: string; // RFC3339 UTC, "" if unknown
+  expires: boolean;
+  expiry: string; // "YYYY-MM-DDTHH:MM:SS", "" if none
 }
 
 export interface CustomIconData {

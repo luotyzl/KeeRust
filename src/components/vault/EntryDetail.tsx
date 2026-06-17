@@ -93,7 +93,7 @@ export default function EntryDetail() {
   const historyDesc = [...entry.history].reverse();
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea className="min-h-0 flex-1" viewportClassName="[&>div]:!block">
       <div className="p-6">
       <div className="mb-6 flex items-start gap-3">
         <div
@@ -161,7 +161,7 @@ export default function EntryDetail() {
         <DetailField label="Username" value={entry.username} />
         <DetailField label="Password" value={entry.password} isPassword />
 
-        {entry.otp_uri && <OtpWidget otpUri={entry.otp_uri} />}
+        {entry.otp_uri && <OtpWidget key={entry.uuid} otpUri={entry.otp_uri} />}
 
         <DetailField label="URL" value={entry.url} isUrl />
 

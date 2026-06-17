@@ -54,6 +54,8 @@ pub struct EntryData {
     pub autotype_obfuscation: bool,         // "mix real keystrokes with random" flag
     pub created: String,                    // creation time, RFC3339 UTC ("" if unknown)
     pub modified: String,                   // last modification time, RFC3339 UTC ("" if unknown)
+    pub expires: bool,                      // whether the entry has an expiry set
+    pub expiry: String,                     // expiry time "YYYY-MM-DDTHH:MM:SS" ("" if none)
 }
 
 #[derive(Serialize, Clone)]
@@ -415,13 +417,22 @@ fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
     if let Some(expires) = update.expires {
         entry.times.expires = Some(expires);
         if expires {
-            entry.times.expiry = update
-                .expiry
-                .as_ref()
-                .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-                .and_then(|d| d.and_hms_opt(0, 0, 0));
+            entry.times.expiry = update.expiry.as_ref().and_then(|d| parse_expiry(d));
         }
     }
+}
+
+// Parse an expiry string from the frontend. Accepts a full datetime
+// ("YYYY-MM-DDTHH:MM[:SS]") and falls back to a bare date (midnight).
+fn parse_expiry(s: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .or_else(|| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok())
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+        })
 }
 
 // ── Entry builder ─────────────────────────────────────────────────────────────
@@ -512,6 +523,12 @@ fn entry_to_data(
         autotype_obfuscation,
         created: fmt_time(entry.times.creation),
         modified: fmt_time(entry.times.last_modification),
+        expires: entry.times.expires.unwrap_or(false),
+        expiry: entry
+            .times
+            .expiry
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .unwrap_or_default(),
     }
 }
 
