@@ -15,9 +15,19 @@ export interface AttachmentInfo {
 }
 
 export interface HistoryEntry {
-  modified: string;
+  index: number; // position in the entry's history vec (0 = most recent)
+  modified: string; // "Saved" time, RFC3339 UTC ("" if unknown)
   title: string;
   username: string;
+  password: string;
+  url: string;
+  notes: string;
+  otp_uri: string | null;
+  tags: string[];
+  expires: boolean;
+  expiry: string; // "YYYY-MM-DDTHH:MM:SS", "" if none
+  icon_id: number;
+  custom_icon_base64: string | null;
 }
 
 export interface EntryData {

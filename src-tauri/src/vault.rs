@@ -26,9 +26,19 @@ pub struct AttachmentInfo {
 
 #[derive(Serialize, Clone)]
 pub struct HistoryEntry {
-    pub modified: String,
+    pub index: usize,    // position in the entry's history vec (0 = most recent)
+    pub modified: String, // "Saved" time, RFC3339 UTC ("" if unknown)
     pub title: String,
     pub username: String,
+    pub password: String,
+    pub url: String,
+    pub notes: String,
+    pub otp_uri: Option<String>,
+    pub tags: Vec<String>,
+    pub expires: bool,
+    pub expiry: String,
+    pub icon_id: i64,
+    pub custom_icon_base64: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -476,30 +486,49 @@ fn entry_to_data(
         None => (true, String::new(), false),
     };
 
+    // KDBX stores times in UTC; emit RFC3339 so the frontend can localize them.
+    let fmt_time = |t: Option<chrono::NaiveDateTime>| {
+        t.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or_default()
+    };
+
     let history: Vec<HistoryEntry> = entry
         .history
         .as_ref()
         .map(|h| {
             h.get_entries()
                 .iter()
-                .map(|e| HistoryEntry {
-                    modified: e
-                        .times
-                        .last_modification
-                        .map(|t: chrono::NaiveDateTime| t.format("%Y-%m-%d %H:%M").to_string())
-                        .unwrap_or_default(),
-                    title: get_field(e, "Title"),
-                    username: get_field(e, "UserName"),
+                .enumerate()
+                .map(|(index, e)| {
+                    // History entries store a built-in icon directly; fall back to
+                    // the live entry's resolved icon for custom/unset icons.
+                    let (h_icon_id, h_custom) = match e.icon() {
+                        Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None),
+                        _ => (icon_id, custom_icon_base64.clone()),
+                    };
+                    HistoryEntry {
+                        index,
+                        modified: fmt_time(e.times.last_modification),
+                        title: get_field(e, "Title"),
+                        username: get_field(e, "UserName"),
+                        password: get_field(e, "Password"),
+                        url: get_field(e, "URL"),
+                        notes: get_field(e, "Notes"),
+                        otp_uri: resolve_otp_uri(e),
+                        tags: e.tags.clone(),
+                        expires: e.times.expires.unwrap_or(false),
+                        expiry: e
+                            .times
+                            .expiry
+                            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
+                            .unwrap_or_default(),
+                        icon_id: h_icon_id,
+                        custom_icon_base64: h_custom,
+                    }
                 })
                 .collect()
         })
         .unwrap_or_default();
-
-    // KDBX stores times in UTC; emit RFC3339 so the frontend can localize them.
-    let fmt_time = |t: Option<chrono::NaiveDateTime>| {
-        t.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .unwrap_or_default()
-    };
 
     EntryData {
         uuid: entry_uuid.to_string(),
@@ -832,6 +861,105 @@ pub async fn delete_entry_permanent(
         db.entry_mut(entry_id)
             .ok_or_else(|| "Entry not found".to_string())?
             .remove(); // consumes EntryMut — permanent removal
+        Ok(())
+    })
+    .await
+}
+
+/// Delete a single history state (by its index in the entry's history vec).
+#[tauri::command]
+pub async fn delete_entry_history(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    index: usize,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+
+        let mut kept: Vec<keepass::db::Entry> = e
+            .history
+            .as_ref()
+            .map(|h| h.get_entries().clone())
+            .ok_or_else(|| "Entry has no history".to_string())?;
+        if index >= kept.len() {
+            return Err("History index out of range".to_string());
+        }
+        kept.remove(index);
+
+        // History has no public remove API; rebuild it. add_entry inserts at the
+        // front, so replay the kept states in reverse to preserve their order.
+        let mut rebuilt = keepass::db::History::default();
+        for h in kept.into_iter().rev() {
+            rebuilt.add_entry(h);
+        }
+        e.history = Some(rebuilt);
+        Ok(())
+    })
+    .await
+}
+
+/// Revert an entry to one of its history states (by index). The entry's current
+/// state is first pushed onto its history, then its fields are overwritten with
+/// the chosen historical version — so reverting itself is undoable.
+#[tauri::command]
+pub async fn revert_entry_history(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    index: usize,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+
+        // Grab the historical version to restore.
+        let snap = {
+            let entries = e
+                .history
+                .as_ref()
+                .map(|h| h.get_entries())
+                .ok_or_else(|| "Entry has no history".to_string())?;
+            entries
+                .get(index)
+                .cloned()
+                .ok_or_else(|| "History index out of range".to_string())?
+        };
+
+        // Push the current state onto history so the revert can be undone.
+        let mut current = (*e).clone();
+        current.history = None;
+        e.history.get_or_insert_default().add_entry(current);
+
+        // Overwrite the live fields with the historical version. Preserve the
+        // creation time and stamp the modification time as now.
+        let creation = e.times.creation;
+        e.fields = snap.fields.clone();
+        e.autotype = snap.autotype.clone();
+        e.tags = snap.tags.clone();
+        e.custom_data = snap.custom_data.clone();
+        e.foreground_color = snap.foreground_color.clone();
+        e.background_color = snap.background_color.clone();
+        e.override_url = snap.override_url.clone();
+        e.quality_check = snap.quality_check;
+        e.times.expiry = snap.times.expiry;
+        e.times.expires = snap.times.expires;
+        e.times.creation = creation;
+        e.times.last_modification = Some(keepass::db::Times::now());
+
+        // Icon: built-in restores directly; custom is re-referenced; none clears.
+        match snap.icon().cloned() {
+            Some(keepass::db::Icon::BuiltIn(n)) => e.set_icon_builtin(n),
+            Some(keepass::db::Icon::Custom(id)) => {
+                let _ = e.set_icon_custom(id);
+            }
+            None => e.set_icon_none(),
+        }
         Ok(())
     })
     .await

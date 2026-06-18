@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, ChevronRight, Code2, KeyRound, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Code2, History, KeyRound, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useApp, getApp, setApp, setView, markSyncPending } from "@/store";
 import { avatarColor } from "@/lib/avatar";
 import { formatDateTime } from "@/lib/format";
@@ -11,6 +11,7 @@ import AvatarInner from "./AvatarInner";
 import DetailField from "./DetailField";
 import OtpWidget from "./OtpWidget";
 import AttachmentList from "./AttachmentList";
+import EntryHistoryDialog from "./EntryHistoryDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,6 +22,13 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
+}
+
+// An entry is "expired" only when it has an expiry set and that time is in the past.
+function isExpired(entry: EntryData): boolean {
+  if (!entry.expires || !entry.expiry) return false;
+  const d = new Date(entry.expiry);
+  return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
 }
 
 function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
@@ -39,6 +47,7 @@ export default function EntryDetail() {
   const selectedEntryUuid = useApp((s) => s.selectedEntryUuid);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  // `historyOpen` toggles the history timeline dialog.
 
   const entry: EntryData | null =
     (vaultData && selectedEntryUuid
@@ -90,7 +99,6 @@ export default function EntryDetail() {
   }
 
   const detailBg = entry.custom_icon_base64 ? "transparent" : avatarColor(entry.title);
-  const historyDesc = [...entry.history].reverse();
 
   return (
     <ScrollArea className="min-h-0 flex-1" viewportClassName="[&>div]:!block">
@@ -144,6 +152,16 @@ export default function EntryDetail() {
               >
                 <Code2 />
               </Button>
+              {entry.history.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="History"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  <History />
+                </Button>
+              )}
               <Button
                 variant="destructive"
                 size="icon"
@@ -199,6 +217,8 @@ export default function EntryDetail() {
         <MetaRow label="Created" value={formatDateTime(entry.created)} />
         <MetaRow label="Modified" value={formatDateTime(entry.modified)} />
         <MetaRow label="Group" value={entry.group_name} />
+        <MetaRow label="Auto-type" value={entry.autotype_enabled ? "Yes" : "No"} />
+        <MetaRow label="Expired" value={isExpired(entry) ? "Yes" : "No"} />
       </div>
 
       {entry.tags.length > 0 && (
@@ -221,34 +241,9 @@ export default function EntryDetail() {
         </div>
       )}
 
-      {entry.history.length > 0 && (
-        <>
-          <button
-            className="text-muted-foreground hover:text-foreground mt-6 mb-2 flex w-full items-center justify-between border-b pb-1.5 text-xs font-semibold tracking-wider uppercase"
-            onClick={() => setHistoryOpen((v) => !v)}
-          >
-            History ({entry.history.length})
-            {historyOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          </button>
-          {historyOpen && (
-            <div>
-              {historyDesc.map((h, i) => (
-                <div
-                  key={i}
-                  className="flex items-baseline gap-3 border-b py-1.5 text-xs last:border-0"
-                >
-                  <span className="text-muted-foreground shrink-0">{h.modified}</span>
-                  <span className="flex-1 truncate">{h.title || "(no title)"}</span>
-                  {h.username && (
-                    <span className="text-muted-foreground shrink-0">{h.username}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
       </div>
+
+      <EntryHistoryDialog entry={entry} open={historyOpen} onOpenChange={setHistoryOpen} />
     </ScrollArea>
   );
 }

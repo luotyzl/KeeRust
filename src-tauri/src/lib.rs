@@ -146,6 +146,8 @@ pub fn run() {
             vault::delete_entry,
             vault::restore_entry,
             vault::delete_entry_permanent,
+            vault::delete_entry_history,
+            vault::revert_entry_history,
             vault::save_entry,
             vault::save_group,
             vault::get_entry_xml,

@@ -39,58 +39,33 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
   }, [otpUri]);
 
   // Split the code into two groups for readability (e.g. "315 076").
-  const display =
-    code.length % 2 === 0 ? `${code.slice(0, code.length / 2)} ${code.slice(code.length / 2)}` : code;
+  const display = code;
 
   const frac = period > 0 ? remaining / period : 0;
-  const ringColor =
-    remaining <= 5 ? "text-destructive" : remaining <= 10 ? "text-yellow-500" : "text-primary";
-
-  const R = 10;
-  const C = 2 * Math.PI * R;
+  const barColor =
+    remaining <= 5 ? "bg-destructive" : remaining <= 10 ? "bg-yellow-500" : "bg-primary";
 
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1.5">
       <div className="text-muted-foreground text-xs">2FA Code</div>
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono-code text-2xl font-bold tracking-[0.1em] tabular-nums">
           {display}
         </span>
-        <div className="flex items-center gap-0.5">
-          <div className="flex size-7 items-center justify-center" title={`${remaining}s`}>
-            <svg className="size-7 -rotate-90" viewBox="0 0 24 24">
-              <circle
-                cx="12"
-                cy="12"
-                r={R}
-                fill="none"
-                strokeWidth="2.5"
-                stroke="currentColor"
-                className="text-muted"
-              />
-              <circle
-                cx="12"
-                cy="12"
-                r={R}
-                fill="none"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                stroke="currentColor"
-                className={"transition-all " + ringColor}
-                strokeDasharray={C}
-                strokeDashoffset={C * (1 - frac)}
-              />
-            </svg>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title="Copy"
-            onClick={() => code !== "------" && copyText(code, "OTP")}
-          >
-            <Copy />
-          </Button>
-        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Copy"
+          onClick={() => code !== "------" && copyText(code, "OTP")}
+        >
+          <Copy />
+        </Button>
+      </div>
+      <div className="bg-muted h-1 w-full overflow-hidden rounded-full">
+        <div
+          className={"h-full rounded-full transition-all duration-1000 ease-linear " + barColor}
+          style={{ width: `${frac * 100}%` }}
+        />
       </div>
     </div>
   );
