@@ -11,7 +11,9 @@ import AvatarInner from "./AvatarInner";
 import DetailField from "./DetailField";
 import OtpWidget from "./OtpWidget";
 import AttachmentList from "./AttachmentList";
+import EntryUrls, { type UrlRow } from "./EntryUrls";
 import EntryHistoryDialog from "./EntryHistoryDialog";
+import { isUrlField } from "@/lib/autotype";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -100,6 +102,16 @@ export default function EntryDetail() {
 
   const detailBg = entry.custom_icon_base64 ? "transparent" : avatarColor(entry.title);
 
+  // Group the primary URL with KP2A_URL* (and other url-named) custom fields,
+  // matching how auto-type treats them; the rest stay under "Custom Fields".
+  const urlRows: UrlRow[] = [
+    ...(entry.url ? [{ label: "URL", value: entry.url }] : []),
+    ...entry.custom_fields
+      .filter((f) => isUrlField(f.name) && f.value)
+      .map((f) => ({ label: f.name, value: f.value })),
+  ];
+  const otherCustomFields = entry.custom_fields.filter((f) => !isUrlField(f.name));
+
   return (
     <ScrollArea className="min-h-0 flex-1" viewportClassName="[&>div]:!block">
       <div className="p-6">
@@ -181,8 +193,6 @@ export default function EntryDetail() {
 
         {entry.otp_uri && <OtpWidget key={entry.uuid} otpUri={entry.otp_uri} />}
 
-        <DetailField label="URL" value={entry.url} isUrl />
-
         {entry.notes && (
           <div className="space-y-1">
             <div className="text-muted-foreground text-xs">Notes</div>
@@ -193,11 +203,18 @@ export default function EntryDetail() {
         )}
       </div>
 
-      {entry.custom_fields.length > 0 && (
+      {urlRows.length > 0 && (
+        <>
+          <SectionHeader>URLs</SectionHeader>
+          <EntryUrls urls={urlRows} />
+        </>
+      )}
+
+      {otherCustomFields.length > 0 && (
         <>
           <SectionHeader>Custom Fields</SectionHeader>
           <div className="space-y-4">
-            {entry.custom_fields.map((f, i) => (
+            {otherCustomFields.map((f, i) => (
               <DetailField key={i} label={f.name} value={f.value} isPassword={f.protected} noStrength />
             ))}
           </div>

@@ -18,6 +18,8 @@ import { DEFAULT_AT_SEQUENCE } from "@/lib/autotype";
 import { estimateStrength } from "@/lib/password";
 import type { CustomField, EntryData, EntryUpdate, GroupData, SaveResult } from "@/types";
 import IconPicker from "@/components/vault/IconPicker";
+import OtpWidget from "@/components/vault/OtpWidget";
+import { parseOtpUri } from "@/lib/totp";
 import PasswordGenerator from "@/components/vault/PasswordGenerator";
 import DateTimePicker from "@/components/vault/DateTimePicker";
 import KeystrokeHelper from "@/components/vault/KeystrokeHelper";
@@ -91,6 +93,9 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
 
   const [showOtp, setShowOtp] = useState(!!entry?.otp_uri);
   const [otpUri, setOtpUri] = useState(entry?.otp_uri ?? "");
+  // When false, a configured code is shown live; true means the raw secret /
+  // otpauth URL field is being edited (i.e. while adding a new code).
+  const [otpEditing, setOtpEditing] = useState(false);
 
   // Expiry is "on" whenever a date is set; no separate toggle.
   const [expiryDate, setExpiryDate] = useState(entry?.expiry ?? "");
@@ -388,24 +393,40 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
           {/* 2FA + Expires */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <FieldLabel>2FA Code</FieldLabel>
-              {showOtp ? (
-                <Input
-                  value={otpUri}
-                  onChange={(e) => setOtpUri(e.target.value)}
-                  placeholder="otpauth://… or base32 secret"
-                  autoComplete="off"
+              {showOtp && !otpEditing && parseOtpUri(otpUri).secret ? (
+                <OtpWidget
+                  otpUri={otpUri}
+                  onRemove={() => {
+                    setShowOtp(false);
+                    setOtpEditing(false);
+                    setOtpUri("");
+                  }}
                 />
               ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-primary -ml-2"
-                  onClick={() => setShowOtp(true)}
-                >
-                  <Plus /> Add 2FA Code
-                </Button>
+                <>
+                  <FieldLabel>2FA Code</FieldLabel>
+                  {showOtp ? (
+                    <Input
+                      value={otpUri}
+                      onChange={(e) => setOtpUri(e.target.value)}
+                      placeholder="otpauth://… or base32 secret"
+                      autoComplete="off"
+                    />
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-primary -ml-2"
+                      onClick={() => {
+                        setShowOtp(true);
+                        setOtpEditing(true);
+                      }}
+                    >
+                      <Plus /> Add 2FA Code
+                    </Button>
+                  )}
+                </>
               )}
             </div>
             <div className="space-y-1.5">

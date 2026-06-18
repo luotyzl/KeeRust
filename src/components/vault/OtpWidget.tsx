@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { Copy } from "lucide-react";
+import { Copy, Trash2 } from "lucide-react";
 import { parseOtpUri, computeTOTP } from "@/lib/totp";
 import { copyText } from "@/stores/toast";
 import { Button } from "@/components/ui/button";
 
-export default function OtpWidget({ otpUri }: { otpUri: string }) {
+// When `onRemove` is supplied (e.g. in the edit form) the copy button is
+// replaced by a remove button so a configured code can be cleared.
+export default function OtpWidget({
+  otpUri,
+  onRemove,
+}: {
+  otpUri: string;
+  onRemove?: () => void;
+}) {
   const [code, setCode] = useState("------");
   const [remaining, setRemaining] = useState(0);
   const [period, setPeriod] = useState(30);
@@ -52,14 +60,26 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
         <span className="font-mono-code text-2xl font-bold tracking-[0.1em] tabular-nums">
           {display}
         </span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title="Copy"
-          onClick={() => code !== "------" && copyText(code, "OTP")}
-        >
-          <Copy />
-        </Button>
+        {onRemove ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-destructive"
+            title="Remove 2FA"
+            onClick={onRemove}
+          >
+            <Trash2 />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Copy"
+            onClick={() => code !== "------" && copyText(code, "OTP")}
+          >
+            <Copy />
+          </Button>
+        )}
       </div>
       <div className="bg-muted h-1 w-full overflow-hidden rounded-full">
         <div
