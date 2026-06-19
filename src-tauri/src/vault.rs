@@ -766,6 +766,22 @@ fn parse_entry_id(uuid: &str) -> Result<keepass::db::EntryId, String> {
     Ok(keepass::db::EntryId::from_uuid(entry_uuid))
 }
 
+/// Collect every entry id under `gid`, recursing into subgroups.
+fn collect_all_entry_ids(
+    db: &keepass::Database,
+    gid: keepass::db::GroupId,
+    out: &mut Vec<keepass::db::EntryId>,
+) {
+    let (entries, subgroups): (Vec<_>, Vec<_>) = match db.group(gid) {
+        Some(g) => (g.entry_ids().collect(), g.group_ids().collect()),
+        None => return,
+    };
+    out.extend(entries);
+    for sg in subgroups {
+        collect_all_entry_ids(db, sg, out);
+    }
+}
+
 /// Get the Recycle Bin group id, creating the group if it doesn't exist yet.
 fn get_or_create_recycle_bin(db: &mut keepass::Database) -> keepass::db::GroupId {
     if let Some(rb) = db.recycle_bin() {
@@ -827,6 +843,48 @@ pub async fn delete_entry(
             .ok_or_else(|| "Entry not found".to_string())?
             .move_to(recycle_bin_id)
             .map_err(|_| "Failed to move entry to Recycle Bin".to_string())
+    })
+    .await
+}
+
+/// Delete a group: rescue all of its entries (recursively, including those in
+/// subgroups) to the Recycle Bin, then remove the group itself.
+#[tauri::command]
+pub async fn delete_group(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let gu = uuid::Uuid::parse_str(&uuid).map_err(|e| format!("Invalid group UUID: {e}"))?;
+        let gid = keepass::db::GroupId::from_uuid(gu);
+
+        if db.group(gid).is_none() {
+            return Err("Group not found".to_string());
+        }
+        if db.root().id().uuid() == gu {
+            return Err("Cannot delete the root group".to_string());
+        }
+        if db.recycle_bin().map(|rb| rb.id().uuid()) == Some(gu) {
+            return Err("Cannot delete the Recycle Bin".to_string());
+        }
+
+        // Move every entry under the group into the Recycle Bin so nothing is
+        // permanently lost; the group's (now empty) subgroups go with it.
+        let recycle_bin_id = get_or_create_recycle_bin(db);
+        let mut entry_ids = Vec::new();
+        collect_all_entry_ids(db, gid, &mut entry_ids);
+        for eid in entry_ids {
+            if let Some(mut e) = db.entry_mut(eid) {
+                e.move_to(recycle_bin_id)
+                    .map_err(|_| "Failed to move entry to Recycle Bin".to_string())?;
+            }
+        }
+
+        db.group_mut(gid)
+            .ok_or_else(|| "Group not found".to_string())?
+            .remove(); // consumes GroupMut — removes the group and any subgroups
+        Ok(())
     })
     .await
 }

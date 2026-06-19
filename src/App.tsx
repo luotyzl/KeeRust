@@ -15,6 +15,7 @@ import VaultScreen from "./components/screens/VaultScreen";
 import SelectScreen from "./components/screens/SelectScreen";
 import SettingsScreen from "./components/screens/SettingsScreen";
 import ConfirmModal from "./components/modals/ConfirmModal";
+import ConfirmGroupDeleteModal from "./components/modals/ConfirmGroupDeleteModal";
 import XmlModal from "./components/modals/XmlModal";
 import CreateModal from "./components/modals/CreateModal";
 import { Toaster } from "./components/ui/sonner";
@@ -100,6 +101,7 @@ export default function App() {
       {screen === "select" && <SelectScreen />}
 
       <ConfirmModal />
+      <ConfirmGroupDeleteModal />
       <XmlModal />
       <CreateModal />
       <Toaster position="bottom-center" richColors />

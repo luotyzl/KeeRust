@@ -147,6 +147,7 @@ pub fn run() {
             vault::open_database,
             vault::force_sync,
             vault::delete_entry,
+            vault::delete_group,
             vault::restore_entry,
             vault::delete_entry_permanent,
             vault::delete_entry_history,

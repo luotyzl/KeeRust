@@ -1,5 +1,5 @@
 import { createStore } from "../lib/store";
-import type { EntryData } from "../types";
+import type { EntryData, GroupData } from "../types";
 
 export type CreateKind = "entry" | "group";
 
@@ -7,6 +7,9 @@ interface ModalState {
   deleteVisible: boolean;
   deleteEntry: EntryData | null;
   deletePermanent: boolean;
+  // Group deletion (separate from entry deletion).
+  deleteGroupVisible: boolean;
+  deleteGroup: GroupData | null;
   xmlVisible: boolean;
   xmlContent: string;
   createVisible: boolean;
@@ -19,6 +22,8 @@ export const modalStore = createStore<ModalState>({
   deleteVisible: false,
   deleteEntry: null,
   deletePermanent: false,
+  deleteGroupVisible: false,
+  deleteGroup: null,
   xmlVisible: false,
   xmlContent: "",
   createVisible: false,
@@ -51,6 +56,14 @@ export function openDeleteModal(entry: EntryData, permanent: boolean): void {
 
 export function closeDeleteModal(): void {
   modalStore.setState({ deleteVisible: false, deleteEntry: null });
+}
+
+export function openDeleteGroupModal(group: GroupData): void {
+  modalStore.setState({ deleteGroup: group, deleteGroupVisible: true });
+}
+
+export function closeDeleteGroupModal(): void {
+  modalStore.setState({ deleteGroupVisible: false, deleteGroup: null });
 }
 
 export function openXmlModal(content: string): void {

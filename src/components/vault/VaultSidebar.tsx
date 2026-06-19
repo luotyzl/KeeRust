@@ -23,10 +23,17 @@ import {
   flashSyncDot,
 } from "@/store";
 import { showToast } from "@/stores/toast";
+import { openDeleteGroupModal } from "@/stores/modals";
 import type { ActiveView, EntryData, VaultData } from "@/types";
 import { Button } from "@/components/ui/button";
 import ThemeToggle from "@/components/ThemeToggle";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 
 const DOT_CLASS: Record<string, string> = {
@@ -234,14 +241,24 @@ export default function VaultSidebar() {
 
           <Section title="Groups">
             {groups.map((g) => (
-              <MenuItem
-                key={g.uuid}
-                icon={<GroupIcon iconId={g.icon_id} custom={g.custom_icon_base64} />}
-                label={g.name}
-                count={groupCount(g.uuid)}
-                view={{ kind: "group", uuid: g.uuid }}
-                active={sameView(activeView, { kind: "group", uuid: g.uuid })}
-              />
+              <ContextMenu key={g.uuid}>
+                <ContextMenuTrigger asChild>
+                  <div>
+                    <MenuItem
+                      icon={<GroupIcon iconId={g.icon_id} custom={g.custom_icon_base64} />}
+                      label={g.name}
+                      count={groupCount(g.uuid)}
+                      view={{ kind: "group", uuid: g.uuid }}
+                      active={sameView(activeView, { kind: "group", uuid: g.uuid })}
+                    />
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem variant="destructive" onSelect={() => openDeleteGroupModal(g)}>
+                    <Trash2 /> Delete
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             ))}
             {rbUuid && (
               <MenuItem
