@@ -92,6 +92,9 @@ pub fn run() {
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
                 .zoom_hotkeys_enabled(false)
+                // Let the WebView handle HTML5 drag-and-drop (e.g. dropping a
+                // file onto the attachments table) instead of Tauri capturing it.
+                .disable_drag_drop_handler()
                 .on_navigation(is_app_url)
                 .build()?;
 
@@ -148,6 +151,8 @@ pub fn run() {
             vault::delete_entry_permanent,
             vault::delete_entry_history,
             vault::revert_entry_history,
+            vault::add_entry_attachment,
+            vault::delete_entry_attachment,
             vault::save_entry,
             vault::save_group,
             vault::get_entry_xml,

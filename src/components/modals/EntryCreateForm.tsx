@@ -19,6 +19,7 @@ import { estimateStrength } from "@/lib/password";
 import type { CustomField, EntryData, EntryUpdate, GroupData, SaveResult } from "@/types";
 import IconPicker from "@/components/vault/IconPicker";
 import OtpWidget from "@/components/vault/OtpWidget";
+import AttachmentTable from "@/components/vault/AttachmentTable";
 import { parseOtpUri } from "@/lib/totp";
 import PasswordGenerator from "@/components/vault/PasswordGenerator";
 import DateTimePicker from "@/components/vault/DateTimePicker";
@@ -69,6 +70,13 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
   const groups = useMemo<GroupData[]>(
     () => (vaultData?.groups ?? []).filter((g) => g.uuid !== vaultData?.recycle_bin_uuid),
     [vaultData]
+  );
+
+  // Live copy of the entry from the store, so the attachments table reflects
+  // uploads/deletes (the `entry` prop is captured when the modal opens).
+  const liveEntry = useMemo(
+    () => (entry ? vaultData?.entries.find((e) => e.uuid === entry.uuid) ?? entry : null),
+    [vaultData, entry]
   );
 
   // "Email" is shown in its own row and "Favorite" as the star — pull them out
@@ -618,10 +626,16 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
 
           {/* Session: Attachments */}
           <div className="space-y-2 rounded-xl bg-muted/50 p-4">
-            <FieldLabel>Attachments</FieldLabel>
-            <p className="text-muted-foreground rounded-md border border-dashed p-3 text-center text-xs">
-              Attachments can be added after the entry is created.
-            </p>
+            {isEdit && liveEntry ? (
+              <AttachmentTable entry={liveEntry} />
+            ) : (
+              <>
+                <FieldLabel>Attachments</FieldLabel>
+                <p className="text-muted-foreground rounded-md border border-dashed p-3 text-center text-xs">
+                  Attachments can be added after the entry is created.
+                </p>
+              </>
+            )}
           </div>
         </div>
         </div>

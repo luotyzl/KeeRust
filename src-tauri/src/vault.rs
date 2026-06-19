@@ -965,6 +965,51 @@ pub async fn revert_entry_history(
     .await
 }
 
+/// Attach a file to an entry. `data_base64` is the raw file contents; `name`
+/// is the filename used as the attachment key (replacing any existing one).
+#[tauri::command]
+pub async fn add_entry_attachment(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    name: String,
+    data_base64: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let bytes = BASE64_STANDARD
+            .decode(&data_base64)
+            .map_err(|e| format!("Invalid file data: {e}"))?;
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+        e.add_attachment(name, keepass::db::Value::Unprotected(bytes));
+        e.times.last_modification = Some(keepass::db::Times::now());
+        Ok(())
+    })
+    .await
+}
+
+/// Remove an attachment from an entry by its filename.
+#[tauri::command]
+pub async fn delete_entry_attachment(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    name: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+        e.remove_attachment_by_name(&name);
+        e.times.last_modification = Some(keepass::db::Times::now());
+        Ok(())
+    })
+    .await
+}
+
 /// Force-fetch from WebDAV, update cache, and return fresh vault data.
 /// Used by the manual "Sync" button — bypasses local cache.
 #[tauri::command]

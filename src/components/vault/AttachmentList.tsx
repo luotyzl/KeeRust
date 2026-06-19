@@ -6,7 +6,7 @@ import {
   previewAttachment,
   type AttachmentPreview,
 } from "@/lib/attachments";
-import { formatSize, attachmentIcon } from "@/lib/format";
+import { formatSize } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,7 +35,6 @@ export default function AttachmentList({
             key={i}
             className="hover:bg-muted/40 flex items-center gap-3 rounded-md px-1 py-1.5 text-sm"
           >
-            <span className="shrink-0 text-lg">{attachmentIcon(a.mime_type)}</span>
             <div className="min-w-0 flex-1">
               <div className="break-words">{a.name}</div>
               {a.size > 0 && (
