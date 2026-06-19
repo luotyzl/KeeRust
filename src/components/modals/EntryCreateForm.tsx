@@ -20,6 +20,7 @@ import type { CustomField, EntryData, EntryUpdate, GroupData, SaveResult } from 
 import IconPicker from "@/components/vault/IconPicker";
 import OtpWidget from "@/components/vault/OtpWidget";
 import AttachmentTable from "@/components/vault/AttachmentTable";
+import EditCustomFieldDialog from "@/components/modals/EditCustomFieldDialog";
 import { parseOtpUri } from "@/lib/totp";
 import PasswordGenerator from "@/components/vault/PasswordGenerator";
 import DateTimePicker from "@/components/vault/DateTimePicker";
@@ -113,8 +114,9 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
       .filter((f) => f.name.toLowerCase() !== "email")
       .map((f) => ({ ...f }))
   );
-  // Indices of protected custom fields whose value is currently revealed.
-  const [revealedFields, setRevealedFields] = useState<Set<number>>(new Set());
+  // Custom-field editing happens in a dialog; null index = adding a new one.
+  const [cfDialogOpen, setCfDialogOpen] = useState(false);
+  const [cfEditIndex, setCfEditIndex] = useState<number | null>(null);
 
   // Icon
   const [selectedIconId, setSelectedIconId] = useState(
@@ -179,17 +181,23 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
     setShowPassword(true);
   }
 
-  function setCf(i: number, patch: Partial<CustomField>) {
-    setCustomFields((prev) => prev.map((cf, idx) => (idx === i ? { ...cf, ...patch } : cf)));
+  function openAddCustomField() {
+    setCfEditIndex(null);
+    setCfDialogOpen(true);
   }
-
-  function toggleReveal(i: number) {
-    setRevealedFields((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
+  function openEditCustomField(i: number) {
+    setCfEditIndex(i);
+    setCfDialogOpen(true);
+  }
+  function submitCustomField(field: CustomField) {
+    setCustomFields((prev) =>
+      cfEditIndex === null
+        ? [...prev, field]
+        : prev.map((cf, idx) => (idx === cfEditIndex ? field : cf))
+    );
+  }
+  function removeCustomField(i: number) {
+    setCustomFields((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   function insertToken(token: string) {
@@ -559,9 +567,7 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
                 variant="ghost"
                 size="icon-sm"
                 title="Add field"
-                onClick={() =>
-                  setCustomFields((prev) => [...prev, { name: "", value: "", protected: false }])
-                }
+                onClick={openAddCustomField}
               >
                 <Plus />
               </Button>
@@ -571,50 +577,31 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
                 No custom fields
               </p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {customFields.map((cf, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <Input
-                      className="basis-[35%]"
-                      value={cf.name}
-                      onChange={(e) => setCf(i, { name: e.target.value })}
-                      placeholder="Name"
-                      autoComplete="off"
-                    />
-                    <div className="relative flex-1">
-                      <Input
-                        type={cf.protected && !revealedFields.has(i) ? "password" : "text"}
-                        className={cf.protected ? "pr-8" : ""}
-                        value={cf.value}
-                        onChange={(e) => setCf(i, { value: e.target.value })}
-                        placeholder="Value"
-                        autoComplete="off"
-                      />
-                      {cf.protected && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          className="absolute top-1/2 right-0.5 -translate-y-1/2"
-                          title={revealedFields.has(i) ? "Hide" : "Show"}
-                          onClick={() => toggleReveal(i)}
-                        >
-                          {revealedFields.has(i) ? <EyeOff /> : <Eye />}
-                        </Button>
-                      )}
-                    </div>
-                    <label className="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">
-                      <Checkbox
-                        checked={cf.protected}
-                        onCheckedChange={(v) => setCf(i, { protected: v === true })}
-                      />
-                      Protected
-                    </label>
+                  <div
+                    key={i}
+                    className="bg-background/40 hover:bg-background/70 flex items-center gap-2 rounded-md border px-3 py-2 transition-colors"
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      title="Edit field"
+                      onClick={() => openEditCustomField(i)}
+                    >
+                      <div className="truncate text-sm font-medium">
+                        {cf.name || "(unnamed)"}
+                      </div>
+                      <div className="text-muted-foreground font-mono-code truncate text-xs">
+                        {cf.value ? (cf.protected ? "••••••••" : cf.value) : "—"}
+                      </div>
+                    </button>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      onClick={() => setCustomFields((prev) => prev.filter((_, idx) => idx !== i))}
+                      title="Remove field"
+                      onClick={() => removeCustomField(i)}
                     >
                       <X />
                     </Button>
@@ -672,6 +659,14 @@ export default function EntryCreateForm({ entry }: { entry?: EntryData | null })
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Add / edit custom field dialog */}
+      <EditCustomFieldDialog
+        open={cfDialogOpen}
+        initial={cfEditIndex === null ? null : customFields[cfEditIndex] ?? null}
+        onOpenChange={setCfDialogOpen}
+        onSubmit={submitCustomField}
+      />
     </>
   );
 }
