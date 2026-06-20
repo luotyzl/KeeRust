@@ -1,19 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { Copy } from "lucide-react";
+import { Copy, Trash2 } from "lucide-react";
 import { parseOtpUri, computeTOTP } from "@/lib/totp";
 import { copyText } from "@/stores/toast";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 
-export default function OtpWidget({ otpUri }: { otpUri: string }) {
+// When `onRemove` is supplied (e.g. in the edit form) the copy button is
+// replaced by a remove button so a configured code can be cleared.
+export default function OtpWidget({
+  otpUri,
+  onRemove,
+}: {
+  otpUri: string;
+  onRemove?: () => void;
+}) {
   const [code, setCode] = useState("------");
-  const [pct, setPct] = useState(100);
   const [remaining, setRemaining] = useState(0);
+  const [period, setPeriod] = useState(30);
   const codeRef = useRef("------");
 
   useEffect(() => {
     const params = parseOtpUri(otpUri);
     if (!params.secret) return;
+    setPeriod(params.period);
     let cancelled = false;
 
     async function refresh() {
@@ -21,7 +29,6 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
       const elapsed = now % params.period;
       const rem = params.period - elapsed;
       setRemaining(rem);
-      setPct((rem / params.period) * 100);
       if (elapsed === 0 || codeRef.current === "------") {
         const c = await computeTOTP(params.secret, params.period, params.digits, params.algorithm);
         if (!cancelled) {
@@ -39,36 +46,46 @@ export default function OtpWidget({ otpUri }: { otpUri: string }) {
     };
   }, [otpUri]);
 
-  // Color the Progress indicator (a child of the Root) without modifying the
-  // shadcn Progress component: target it via a descendant selector.
+  // Split the code into two groups for readability (e.g. "315 076").
+  const display = code;
+
+  const frac = period > 0 ? remaining / period : 0;
   const barColor =
-    remaining <= 5
-      ? "[&>[data-slot=progress-indicator]]:bg-destructive"
-      : remaining <= 10
-        ? "[&>[data-slot=progress-indicator]]:bg-yellow-500"
-        : "";
+    remaining <= 5 ? "bg-destructive" : remaining <= 10 ? "bg-yellow-500" : "bg-primary";
 
   return (
     <div className="space-y-1.5">
-      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-        One-Time Password
+      <div className="text-muted-foreground text-xs">2FA Code</div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono-code text-2xl font-bold tracking-[0.1em] tabular-nums">
+          {display}
+        </span>
+        {onRemove ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-destructive"
+            title="Remove 2FA"
+            onClick={onRemove}
+          >
+            <Trash2 />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Copy"
+            onClick={() => code !== "------" && copyText(code, "OTP")}
+          >
+            <Copy />
+          </Button>
+        )}
       </div>
-      <div className="bg-muted/40 flex items-center gap-3 rounded-md border px-3 py-2">
-        <span className="font-mono-code text-primary text-xl font-bold tracking-[0.15em] tabular-nums">
-          {code}
-        </span>
-        <Progress value={pct} className={"h-1.5 flex-1 " + barColor} />
-        <span className="text-muted-foreground w-7 text-right text-xs tabular-nums">
-          {remaining}s
-        </span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title="Copy"
-          onClick={() => code !== "------" && copyText(code, "OTP")}
-        >
-          <Copy />
-        </Button>
+      <div className="bg-muted h-1 w-full overflow-hidden rounded-full">
+        <div
+          className={"h-full rounded-full transition-all duration-1000 ease-linear " + barColor}
+          style={{ width: `${frac * 100}%` }}
+        />
       </div>
     </div>
   );

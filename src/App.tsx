@@ -4,17 +4,21 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp, setApp, applySource, flashSyncDot, setSyncDot } from "./store";
 import { getSettings } from "./stores/settings";
+import { installAutoLock, lockOnMinimizeIfEnabled } from "./lib/autolock";
 import { showToast } from "./stores/toast";
 import { handleAutoType } from "./stores/autotype";
 import type { VaultSource } from "./types";
 
 import ConfigScreen from "./components/screens/ConfigScreen";
 import UnlockScreen from "./components/screens/UnlockScreen";
+import NewDatabaseScreen from "./components/screens/NewDatabaseScreen";
 import VaultScreen from "./components/screens/VaultScreen";
 import SelectScreen from "./components/screens/SelectScreen";
 import SettingsScreen from "./components/screens/SettingsScreen";
 import ConfirmModal from "./components/modals/ConfirmModal";
+import ConfirmGroupDeleteModal from "./components/modals/ConfirmGroupDeleteModal";
 import XmlModal from "./components/modals/XmlModal";
+import CreateModal from "./components/modals/CreateModal";
 import { Toaster } from "./components/ui/sonner";
 
 interface AutoTypePayload {
@@ -53,6 +57,9 @@ export default function App() {
         })
       );
 
+      // Auto-lock: inactivity timer + minimize + OS-lock triggers.
+      unlisteners.push(await installAutoLock());
+
       // Intercept the window close: hide to the system tray when enabled
       // (the tray icon's Open/Quit menu brings it back or exits).
       const appWindow = getCurrentWindow();
@@ -61,6 +68,8 @@ export default function App() {
           if (getSettings().minimizeOnClose) {
             event.preventDefault();
             void appWindow.hide();
+            // Hiding to the tray counts as minimizing — lock if enabled.
+            lockOnMinimizeIfEnabled();
           }
         })
       );
@@ -88,12 +97,15 @@ export default function App() {
     <>
       {screen === "config" && <ConfigScreen />}
       {screen === "unlock" && <UnlockScreen />}
+      {screen === "new" && <NewDatabaseScreen />}
       {screen === "vault" && <VaultScreen />}
       {screen === "settings" && <SettingsScreen />}
       {screen === "select" && <SelectScreen />}
 
       <ConfirmModal />
+      <ConfirmGroupDeleteModal />
       <XmlModal />
+      <CreateModal />
       <Toaster position="bottom-center" richColors />
     </>
   );

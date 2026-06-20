@@ -1,19 +1,27 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Download } from "lucide-react";
-import { ICON_EMOJI } from "@/lib/icons";
+import { ICON_COMPONENTS } from "@/lib/icons";
 import { showToast } from "@/stores/toast";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import type { CustomIconData } from "@/types";
 
 export default function IconPicker({
   selectedIconId,
+  selectedCustomUuid,
+  customIcons,
   url,
   onSelectBuiltin,
+  onSelectCustom,
   onFavicon,
 }: {
   selectedIconId: number;
+  selectedCustomUuid: string | null;
+  customIcons: CustomIconData[];
   url: string;
   onSelectBuiltin: (id: number) => void;
+  onSelectCustom: (uuid: string) => void;
   onFavicon: (base64: string) => void;
 }) {
   const [fetching, setFetching] = useState(false);
@@ -47,21 +55,41 @@ export default function IconPicker({
         <Download className="size-3.5" />
         {fetching ? "Fetching favicon…" : "Download favicon from URL"}
       </button>
-      <div className="grid max-h-48 grid-cols-10 gap-1 overflow-y-auto">
-        {ICON_EMOJI.map((emoji, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => onSelectBuiltin(i)}
-            className={cn(
-              "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent text-base",
-              i === selectedIconId && "border-ring bg-muted"
-            )}
-          >
-            {emoji}
-          </button>
-        ))}
-      </div>
+      <ScrollArea viewportClassName="max-h-64">
+        <div className="grid grid-cols-10 gap-1">
+          {ICON_COMPONENTS.map((Icon, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onSelectBuiltin(i)}
+              className={cn(
+                "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent",
+                i === selectedIconId && selectedCustomUuid === null && "border-ring bg-muted"
+              )}
+            >
+              <Icon className="size-4" />
+            </button>
+          ))}
+          {customIcons.map((ci) => (
+            <button
+              key={ci.uuid}
+              type="button"
+              title="Custom icon"
+              onClick={() => onSelectCustom(ci.uuid)}
+              className={cn(
+                "hover:bg-muted flex aspect-square items-center justify-center rounded-md border border-transparent",
+                ci.uuid === selectedCustomUuid && "border-ring bg-muted"
+              )}
+            >
+              <img
+                className="size-4 rounded-sm object-contain"
+                src={`data:image/png;base64,${ci.base64}`}
+                alt=""
+              />
+            </button>
+          ))}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

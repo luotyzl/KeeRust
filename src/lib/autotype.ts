@@ -26,10 +26,20 @@ function getStringRank(s1: string, s2: string): number {
   return 0;
 }
 
+// KeePass2Android stores additional URLs in custom fields named "KP2A_URL*"
+// (KeeWeb's ExtraUrlFieldName). Treat those — plus any field whose name
+// mentions "url" — as URLs for window/url matching.
+const EXTRA_URL_FIELD = "kp2a_url";
+
+export function isUrlField(name: string): boolean {
+  const n = (name || "").toLowerCase();
+  return n.startsWith(EXTRA_URL_FIELD) || /url/i.test(n);
+}
+
 function entryAllUrls(e: EntryData): string[] {
   const urls = e.url ? [e.url] : [];
   for (const f of e.custom_fields || []) {
-    if (/url/i.test(f.name) && f.value) urls.push(f.value);
+    if (isUrlField(f.name) && f.value) urls.push(f.value);
   }
   return urls;
 }

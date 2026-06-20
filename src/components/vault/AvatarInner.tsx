@@ -1,7 +1,7 @@
-import { iconEmoji } from "@/lib/icons";
+import { iconComponent } from "@/lib/icons";
 
 // Inner content for an avatar tile: a custom PNG if present, else the entry's
-// built-in icon emoji. The parent sets the tile size / background / text size.
+// built-in Lucide icon. The parent sets the tile size / background / text color.
 export default function AvatarInner({
   iconId,
   customIconBase64,
@@ -18,5 +18,6 @@ export default function AvatarInner({
       />
     );
   }
-  return <span className="leading-none">{iconEmoji(iconId < 0 ? 0 : iconId)}</span>;
+  const Icon = iconComponent(iconId < 0 ? 0 : iconId);
+  return <Icon className="size-[60%]" />;
 }

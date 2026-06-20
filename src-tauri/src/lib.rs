@@ -2,6 +2,8 @@ mod attachments;
 mod autotype;
 mod favicon;
 mod source;
+#[cfg(windows)]
+mod syslock;
 mod vault;
 mod webdav;
 
@@ -9,9 +11,21 @@ use autotype::AutotypeState;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+// Allow navigation only within the app's own pages (prod: tauri://localhost /
+// https://tauri.localhost; dev: http://localhost:<port>). Everything else is
+// blocked — the desktop equivalent of KeeWeb's Electron `will-navigate` guard,
+// so a stray link or dropped file can't replace the SPA.
+fn is_app_url(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" => true,
+        "http" | "https" => matches!(url.host_str(), Some("localhost") | Some("tauri.localhost")),
+        _ => false,
+    }
+}
 
 // Bring the main window back into view (from the tray or minimized).
 fn show_main_window(app: &tauri::AppHandle) {
@@ -49,6 +63,14 @@ pub fn run() {
                     if shortcut == &ctrl_k_h {
                         show_main_window(app);
                     } else if shortcut == &autotype_h {
+                        // Auto-type targets *other* applications. If KeeRust is the
+                        // active window, ignore the hotkey so it never types into
+                        // our own UI.
+                        if let Some(win) = app.get_webview_window("main") {
+                            if win.is_focused().unwrap_or(false) {
+                                return;
+                            }
+                        }
                         // Capture the target window NOW, before we touch focus.
                         let (hwnd, title, url) = autotype::capture_foreground();
                         let state = app.state::<AutotypeState>();
@@ -61,6 +83,27 @@ pub fn run() {
         )
         .manage(AutotypeState::default())
         .setup(move |app| {
+            // Create the main window in code (instead of tauri.conf) so we can
+            // lock it down like KeeWeb does at the app level: disable the
+            // WebView's built-in zoom hotkeys (Ctrl +/-/0 and Ctrl+wheel) and
+            // refuse to navigate away from the app's own pages.
+            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title("KeeRust")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .zoom_hotkeys_enabled(false)
+                // Let the WebView handle HTML5 drag-and-drop (e.g. dropping a
+                // file onto the attachments table) instead of Tauri capturing it.
+                .disable_drag_drop_handler()
+                .on_navigation(is_app_url)
+                .build()?;
+
+            // Watch for OS session lock / sleep → emits "os-lock" to the frontend.
+            #[cfg(windows)]
+            syslock::watch(&main_window);
+            #[cfg(not(windows))]
+            let _ = &main_window;
+
             // Ignore failures (e.g. a shortcut already taken system-wide) so the
             // app still launches.
             let _ = app.global_shortcut().register(ctrl_k);
@@ -101,12 +144,26 @@ pub fn run() {
             source::get_vault_source,
             source::save_webdav_config,
             source::open_local_file,
+            source::pick_key_file,
+            source::get_key_file,
+            source::clear_key_file,
             vault::open_database,
+            vault::create_database,
+            vault::rename_database,
+            vault::change_master_password,
+            vault::generate_key_file,
+            vault::remove_key_file,
             vault::force_sync,
             vault::delete_entry,
+            vault::delete_group,
             vault::restore_entry,
             vault::delete_entry_permanent,
+            vault::delete_entry_history,
+            vault::revert_entry_history,
+            vault::add_entry_attachment,
+            vault::delete_entry_attachment,
             vault::save_entry,
+            vault::save_group,
             vault::get_entry_xml,
             favicon::fetch_favicon,
             autotype::autotype_run,

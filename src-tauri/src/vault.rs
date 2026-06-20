@@ -3,9 +3,12 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use tauri::{Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::attachments::mime_type;
-use crate::source::{load_source, VaultSource};
+use crate::source::{
+    load_keyfile_path, load_source, save_keyfile_path, save_source, VaultSource,
+};
 
 // ── Outbound data structures ──────────────────────────────────────────────────
 
@@ -26,9 +29,19 @@ pub struct AttachmentInfo {
 
 #[derive(Serialize, Clone)]
 pub struct HistoryEntry {
-    pub modified: String,
+    pub index: usize,    // position in the entry's history vec (0 = most recent)
+    pub modified: String, // "Saved" time, RFC3339 UTC ("" if unknown)
     pub title: String,
     pub username: String,
+    pub password: String,
+    pub url: String,
+    pub notes: String,
+    pub otp_uri: Option<String>,
+    pub tags: Vec<String>,
+    pub expires: bool,
+    pub expiry: String,
+    pub icon_id: i64,
+    pub custom_icon_base64: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -48,9 +61,14 @@ pub struct EntryData {
     pub tags: Vec<String>,                  // entry tags (KDBX <Tags>)
     pub icon_id: i64,                       // built-in icon index 0-68, or -1 if custom
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
+    pub custom_icon_uuid: Option<String>,   // UUID of the custom icon (for re-selection)
     pub autotype_enabled: bool,             // whether auto-type is enabled for this entry
     pub autotype_sequence: String,          // custom default keystroke sequence ("" = global default)
     pub autotype_obfuscation: bool,         // "mix real keystrokes with random" flag
+    pub created: String,                    // creation time, RFC3339 UTC ("" if unknown)
+    pub modified: String,                   // last modification time, RFC3339 UTC ("" if unknown)
+    pub expires: bool,                      // whether the entry has an expiry set
+    pub expiry: String,                     // expiry time "YYYY-MM-DDTHH:MM:SS" ("" if none)
 }
 
 #[derive(Serialize, Clone)]
@@ -62,11 +80,18 @@ pub struct GroupData {
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
 }
 
+#[derive(Serialize, Clone)]
+pub struct CustomIconData {
+    pub uuid: String,   // custom icon UUID (matches EntryData.custom_icon_uuid)
+    pub base64: String, // raw PNG data
+}
+
 #[derive(Serialize)]
 pub struct VaultData {
     pub groups: Vec<GroupData>,
     pub entries: Vec<EntryData>,
     pub recycle_bin_uuid: Option<String>,
+    pub custom_icons: Vec<CustomIconData>, // all custom icons in the DB (pickable)
 }
 
 #[derive(Serialize)]
@@ -96,10 +121,28 @@ pub struct EntryUpdate {
     pub otp_uri: String, // empty = no OTP
     pub custom_fields: Vec<CustomFieldUpdate>,
     pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave the existing icon unchanged
-    pub custom_icon_base64: Option<String>, // when set, store as a new custom icon (e.g. favicon)
+    pub custom_icon_base64: Option<String>, // when set, store as a NEW custom icon (e.g. favicon)
+    pub custom_icon_uuid: Option<String>, // when set, reference an EXISTING custom icon by UUID
     pub autotype_enabled: bool,
     pub autotype_sequence: String, // "" = inherit the global default sequence
     pub autotype_obfuscation: bool,
+    // The following are optional so older payloads leave them unchanged.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>, // None = leave existing tags untouched
+    #[serde(default)]
+    pub expires: Option<bool>, // None = leave expiry flag untouched
+    #[serde(default)]
+    pub expiry: Option<String>, // "YYYY-MM-DD" when expires is true
+}
+
+#[derive(Deserialize)]
+pub struct GroupUpdate {
+    pub uuid: String,        // empty = new group
+    pub parent_uuid: String, // parent for a new group (empty = root)
+    pub name: String,
+    pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave existing / custom
+    pub custom_icon_base64: Option<String>, // when set, store as a NEW custom icon
+    pub custom_icon_uuid: Option<String>, // when set, reference an EXISTING custom icon by UUID
 }
 
 // ── Cache path ────────────────────────────────────────────────────────────────
@@ -113,14 +156,33 @@ fn cache_path(app: &tauri::AppHandle) -> std::path::PathBuf {
 
 // ── Open / persist helpers ──────────────────────────────────────────────────────
 
-/// Decrypt KDBX bytes with the master password.
-fn open_db(bytes: &[u8], password: &str) -> Result<keepass::Database, String> {
+/// Build the master key (password + optional key file) for the active vault.
+/// The key file path is persisted separately (see `source.rs`) and applied to
+/// every open/save, so individual commands only need to pass the password.
+fn db_key(app: &tauri::AppHandle, password: &str) -> Result<keepass::DatabaseKey, String> {
+    let mut key = keepass::DatabaseKey::new();
+    if !password.is_empty() {
+        key = key.with_password(password);
+    }
+    if let Some(path) = load_keyfile_path(app) {
+        let mut f = std::fs::File::open(&path)
+            .map_err(|e| format!("Failed to open key file: {e}"))?;
+        key = key
+            .with_keyfile(&mut f)
+            .map_err(|e| format!("Failed to read key file: {e}"))?;
+    }
+    Ok(key)
+}
+
+/// Decrypt KDBX bytes with the active vault's master key (password + key file).
+fn open_db(
+    app: &tauri::AppHandle,
+    bytes: &[u8],
+    password: &str,
+) -> Result<keepass::Database, String> {
     let mut cursor = Cursor::new(bytes);
-    keepass::Database::open(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(password),
-    )
-    .map_err(|e| format!("Failed to open database: {e}"))
+    keepass::Database::open(&mut cursor, db_key(app, password)?)
+        .map_err(|e| format!("Failed to open database: {e}"))
 }
 
 /// Read the database bytes to work from. WebDAV is cache-first (use the local
@@ -294,17 +356,45 @@ fn attachment_bytes(att: &keepass::db::Attachment) -> Vec<u8> {
     }
 }
 
-/// Apply the chosen icon to an entry. A supplied custom icon (e.g. a downloaded
-/// favicon) takes priority; otherwise a built-in index >= 0 is set; otherwise the
-/// existing icon is left untouched.
-fn apply_icon(e: &mut keepass::db::EntryMut<'_>, update: &EntryUpdate) -> Result<(), String> {
+/// Apply the chosen icon to an entry. Priority: a supplied custom icon (e.g. a
+/// downloaded favicon) is stored as new; otherwise an existing custom icon
+/// (resolved to `existing_custom`) is referenced; otherwise a built-in index >= 0
+/// is set; otherwise the existing icon is left untouched.
+fn apply_icon(
+    e: &mut keepass::db::EntryMut<'_>,
+    update: &EntryUpdate,
+    existing_custom: Option<keepass::db::CustomIconId>,
+) -> Result<(), String> {
     if let Some(b64) = &update.custom_icon_base64 {
         let bytes = BASE64_STANDARD
             .decode(b64)
             .map_err(|e| format!("Invalid icon data: {e}"))?;
         e.set_icon_custom_new(bytes);
+    } else if let Some(id) = existing_custom {
+        e.set_icon_custom(id)
+            .map_err(|e| format!("Custom icon not found: {e}"))?;
     } else if update.icon_id >= 0 {
         e.set_icon_builtin(update.icon_id as usize);
+    }
+    Ok(())
+}
+
+/// Apply the chosen icon to a group (same priority as `apply_icon` for entries).
+fn apply_group_icon(
+    g: &mut keepass::db::GroupMut<'_>,
+    update: &GroupUpdate,
+    existing_custom: Option<keepass::db::CustomIconId>,
+) -> Result<(), String> {
+    if let Some(b64) = &update.custom_icon_base64 {
+        let bytes = BASE64_STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Invalid icon data: {e}"))?;
+        g.set_icon_custom_new(bytes);
+    } else if let Some(id) = existing_custom {
+        g.set_icon_custom(id)
+            .map_err(|e| format!("Custom icon not found: {e}"))?;
+    } else if update.icon_id >= 0 {
+        g.set_icon_builtin(update.icon_id as usize);
     }
     Ok(())
 }
@@ -345,6 +435,36 @@ fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
     };
     at.data_transfer_obfuscation = Some(update.autotype_obfuscation);
     entry.autotype = Some(at);
+
+    // Tags (only when provided, so older payloads preserve existing tags).
+    if let Some(tags) = &update.tags {
+        entry.tags = tags
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+    }
+
+    // Expiry (only when provided).
+    if let Some(expires) = update.expires {
+        entry.times.expires = Some(expires);
+        if expires {
+            entry.times.expiry = update.expiry.as_ref().and_then(|d| parse_expiry(d));
+        }
+    }
+}
+
+// Parse an expiry string from the frontend. Accepts a full datetime
+// ("YYYY-MM-DDTHH:MM[:SS]") and falls back to a bare date (midnight).
+fn parse_expiry(s: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .or_else(|| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok())
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+        })
 }
 
 // ── Entry builder ─────────────────────────────────────────────────────────────
@@ -357,6 +477,7 @@ fn entry_to_data(
     attachments: Vec<AttachmentInfo>,
     icon_id: i64,
     custom_icon_base64: Option<String>,
+    custom_icon_uuid: Option<String>,
 ) -> EntryData {
     let mut custom_fields: Vec<CustomField> = entry
         .fields
@@ -387,20 +508,45 @@ fn entry_to_data(
         None => (true, String::new(), false),
     };
 
+    // KDBX stores times in UTC; emit RFC3339 so the frontend can localize them.
+    let fmt_time = |t: Option<chrono::NaiveDateTime>| {
+        t.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or_default()
+    };
+
     let history: Vec<HistoryEntry> = entry
         .history
         .as_ref()
         .map(|h| {
             h.get_entries()
                 .iter()
-                .map(|e| HistoryEntry {
-                    modified: e
-                        .times
-                        .last_modification
-                        .map(|t: chrono::NaiveDateTime| t.format("%Y-%m-%d %H:%M").to_string())
-                        .unwrap_or_default(),
-                    title: get_field(e, "Title"),
-                    username: get_field(e, "UserName"),
+                .enumerate()
+                .map(|(index, e)| {
+                    // History entries store a built-in icon directly; fall back to
+                    // the live entry's resolved icon for custom/unset icons.
+                    let (h_icon_id, h_custom) = match e.icon() {
+                        Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None),
+                        _ => (icon_id, custom_icon_base64.clone()),
+                    };
+                    HistoryEntry {
+                        index,
+                        modified: fmt_time(e.times.last_modification),
+                        title: get_field(e, "Title"),
+                        username: get_field(e, "UserName"),
+                        password: get_field(e, "Password"),
+                        url: get_field(e, "URL"),
+                        notes: get_field(e, "Notes"),
+                        otp_uri: resolve_otp_uri(e),
+                        tags: e.tags.clone(),
+                        expires: e.times.expires.unwrap_or(false),
+                        expiry: e
+                            .times
+                            .expiry
+                            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
+                            .unwrap_or_default(),
+                        icon_id: h_icon_id,
+                        custom_icon_base64: h_custom,
+                    }
                 })
                 .collect()
         })
@@ -422,9 +568,18 @@ fn entry_to_data(
         tags: entry.tags.clone(),
         icon_id,
         custom_icon_base64,
+        custom_icon_uuid,
         autotype_enabled,
         autotype_sequence,
         autotype_obfuscation,
+        created: fmt_time(entry.times.creation),
+        modified: fmt_time(entry.times.last_modification),
+        expires: entry.times.expires.unwrap_or(false),
+        expiry: entry
+            .times
+            .expiry
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .unwrap_or_default(),
     }
 }
 
@@ -466,16 +621,16 @@ fn collect_nodes(
                 })
                 .collect();
 
-            // Resolve the entry's icon: built-in index, or raw bytes for a custom icon
-            let (icon_id, custom_icon_base64) = match e.icon() {
-                Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None),
-                Some(keepass::db::Icon::Custom(_)) => {
+            // Resolve the entry's icon: built-in index, or raw bytes + UUID for a custom icon
+            let (icon_id, custom_icon_base64, custom_icon_uuid) = match e.icon() {
+                Some(keepass::db::Icon::BuiltIn(n)) => (*n as i64, None, None),
+                Some(keepass::db::Icon::Custom(id)) => {
                     let data = e
                         .custom_icon()
                         .map(|ci| BASE64_STANDARD.encode(&ci.data));
-                    (-1, data)
+                    (-1, data, Some(id.uuid().to_string()))
                 }
-                None => (0, None), // default to the key icon
+                None => (0, None, None), // default to the key icon
             };
 
             entries.push(entry_to_data(
@@ -486,6 +641,7 @@ fn collect_nodes(
                 attachments,
                 icon_id,
                 custom_icon_base64,
+                custom_icon_uuid,
             ));
         }
     }
@@ -526,6 +682,15 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
 
     collect_nodes(&*root, &db, &root_name, &root_uuid, &mut entries, &mut groups);
 
+    // All custom icons in the database — pickable for any entry/group.
+    let custom_icons: Vec<CustomIconData> = db
+        .iter_all_custom_icons()
+        .map(|ci| CustomIconData {
+            uuid: ci.id().uuid().to_string(),
+            base64: BASE64_STANDARD.encode(&ci.data),
+        })
+        .collect();
+
     // "All Entries" count excludes anything that lives in the Recycle Bin
     let non_recycled = entries
         .iter()
@@ -547,6 +712,7 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
         groups,
         entries,
         recycle_bin_uuid,
+        custom_icons,
     }
 }
 
@@ -562,7 +728,7 @@ pub async fn open_database(
     // Local files: read directly, no cache and no background sync.
     if source.is_local() {
         let bytes = source.fetch().await?;
-        let db = open_db(&bytes, &password)?;
+        let db = open_db(&app, &bytes, &password)?;
         return Ok(build_vault_data(db));
     }
 
@@ -596,7 +762,7 @@ pub async fn open_database(
         b
     };
 
-    let db = open_db(&bytes, &password)?;
+    let db = open_db(&app, &bytes, &password)?;
 
     // Background: check if remote has a newer version than what we just served
     if used_cache {
@@ -620,6 +786,22 @@ pub async fn open_database(
 fn parse_entry_id(uuid: &str) -> Result<keepass::db::EntryId, String> {
     let entry_uuid = uuid::Uuid::parse_str(uuid).map_err(|e| format!("Invalid UUID: {e}"))?;
     Ok(keepass::db::EntryId::from_uuid(entry_uuid))
+}
+
+/// Collect every entry id under `gid`, recursing into subgroups.
+fn collect_all_entry_ids(
+    db: &keepass::Database,
+    gid: keepass::db::GroupId,
+    out: &mut Vec<keepass::db::EntryId>,
+) {
+    let (entries, subgroups): (Vec<_>, Vec<_>) = match db.group(gid) {
+        Some(g) => (g.entry_ids().collect(), g.group_ids().collect()),
+        None => return,
+    };
+    out.extend(entries);
+    for sg in subgroups {
+        collect_all_entry_ids(db, sg, out);
+    }
 }
 
 /// Get the Recycle Bin group id, creating the group if it doesn't exist yet.
@@ -652,18 +834,15 @@ where
     let source = load_source(&app)?;
 
     let bytes = read_working_bytes(&app, &source).await?;
-    let mut db = open_db(&bytes, &password)?;
+    let mut db = open_db(&app, &bytes, &password)?;
 
     mutate(&mut db)?;
 
     let mut saved_bytes: Vec<u8> = Vec::new();
-    db.save(
-        &mut saved_bytes,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to save: {e}"))?;
+    db.save(&mut saved_bytes, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
 
-    let db2 = open_db(&saved_bytes, &password)?;
+    let db2 = open_db(&app, &saved_bytes, &password)?;
     persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(build_vault_data(db2))
@@ -683,6 +862,48 @@ pub async fn delete_entry(
             .ok_or_else(|| "Entry not found".to_string())?
             .move_to(recycle_bin_id)
             .map_err(|_| "Failed to move entry to Recycle Bin".to_string())
+    })
+    .await
+}
+
+/// Delete a group: rescue all of its entries (recursively, including those in
+/// subgroups) to the Recycle Bin, then remove the group itself.
+#[tauri::command]
+pub async fn delete_group(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let gu = uuid::Uuid::parse_str(&uuid).map_err(|e| format!("Invalid group UUID: {e}"))?;
+        let gid = keepass::db::GroupId::from_uuid(gu);
+
+        if db.group(gid).is_none() {
+            return Err("Group not found".to_string());
+        }
+        if db.root().id().uuid() == gu {
+            return Err("Cannot delete the root group".to_string());
+        }
+        if db.recycle_bin().map(|rb| rb.id().uuid()) == Some(gu) {
+            return Err("Cannot delete the Recycle Bin".to_string());
+        }
+
+        // Move every entry under the group into the Recycle Bin so nothing is
+        // permanently lost; the group's (now empty) subgroups go with it.
+        let recycle_bin_id = get_or_create_recycle_bin(db);
+        let mut entry_ids = Vec::new();
+        collect_all_entry_ids(db, gid, &mut entry_ids);
+        for eid in entry_ids {
+            if let Some(mut e) = db.entry_mut(eid) {
+                e.move_to(recycle_bin_id)
+                    .map_err(|_| "Failed to move entry to Recycle Bin".to_string())?;
+            }
+        }
+
+        db.group_mut(gid)
+            .ok_or_else(|| "Group not found".to_string())?
+            .remove(); // consumes GroupMut — removes the group and any subgroups
+        Ok(())
     })
     .await
 }
@@ -722,6 +943,150 @@ pub async fn delete_entry_permanent(
     .await
 }
 
+/// Delete a single history state (by its index in the entry's history vec).
+#[tauri::command]
+pub async fn delete_entry_history(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    index: usize,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+
+        let mut kept: Vec<keepass::db::Entry> = e
+            .history
+            .as_ref()
+            .map(|h| h.get_entries().clone())
+            .ok_or_else(|| "Entry has no history".to_string())?;
+        if index >= kept.len() {
+            return Err("History index out of range".to_string());
+        }
+        kept.remove(index);
+
+        // History has no public remove API; rebuild it. add_entry inserts at the
+        // front, so replay the kept states in reverse to preserve their order.
+        let mut rebuilt = keepass::db::History::default();
+        for h in kept.into_iter().rev() {
+            rebuilt.add_entry(h);
+        }
+        e.history = Some(rebuilt);
+        Ok(())
+    })
+    .await
+}
+
+/// Revert an entry to one of its history states (by index). The entry's current
+/// state is first pushed onto its history, then its fields are overwritten with
+/// the chosen historical version — so reverting itself is undoable.
+#[tauri::command]
+pub async fn revert_entry_history(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    index: usize,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+
+        // Grab the historical version to restore.
+        let snap = {
+            let entries = e
+                .history
+                .as_ref()
+                .map(|h| h.get_entries())
+                .ok_or_else(|| "Entry has no history".to_string())?;
+            entries
+                .get(index)
+                .cloned()
+                .ok_or_else(|| "History index out of range".to_string())?
+        };
+
+        // Push the current state onto history so the revert can be undone.
+        let mut current = (*e).clone();
+        current.history = None;
+        e.history.get_or_insert_default().add_entry(current);
+
+        // Overwrite the live fields with the historical version. Preserve the
+        // creation time and stamp the modification time as now.
+        let creation = e.times.creation;
+        e.fields = snap.fields.clone();
+        e.autotype = snap.autotype.clone();
+        e.tags = snap.tags.clone();
+        e.custom_data = snap.custom_data.clone();
+        e.foreground_color = snap.foreground_color.clone();
+        e.background_color = snap.background_color.clone();
+        e.override_url = snap.override_url.clone();
+        e.quality_check = snap.quality_check;
+        e.times.expiry = snap.times.expiry;
+        e.times.expires = snap.times.expires;
+        e.times.creation = creation;
+        e.times.last_modification = Some(keepass::db::Times::now());
+
+        // Icon: built-in restores directly; custom is re-referenced; none clears.
+        match snap.icon().cloned() {
+            Some(keepass::db::Icon::BuiltIn(n)) => e.set_icon_builtin(n),
+            Some(keepass::db::Icon::Custom(id)) => {
+                let _ = e.set_icon_custom(id);
+            }
+            None => e.set_icon_none(),
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Attach a file to an entry. `data_base64` is the raw file contents; `name`
+/// is the filename used as the attachment key (replacing any existing one).
+#[tauri::command]
+pub async fn add_entry_attachment(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    name: String,
+    data_base64: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let bytes = BASE64_STANDARD
+            .decode(&data_base64)
+            .map_err(|e| format!("Invalid file data: {e}"))?;
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+        e.add_attachment(name, keepass::db::Value::Unprotected(bytes));
+        e.times.last_modification = Some(keepass::db::Times::now());
+        Ok(())
+    })
+    .await
+}
+
+/// Remove an attachment from an entry by its filename.
+#[tauri::command]
+pub async fn delete_entry_attachment(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+    name: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let entry_id = parse_entry_id(&uuid)?;
+        let mut e = db
+            .entry_mut(entry_id)
+            .ok_or_else(|| "Entry not found".to_string())?;
+        e.remove_attachment_by_name(&name);
+        e.times.last_modification = Some(keepass::db::Times::now());
+        Ok(())
+    })
+    .await
+}
+
 /// Force-fetch from WebDAV, update cache, and return fresh vault data.
 /// Used by the manual "Sync" button — bypasses local cache.
 #[tauri::command]
@@ -743,7 +1108,7 @@ pub async fn force_sync(
         let _ = std::fs::write(&cache, &bytes);
     }
 
-    let db = open_db(&bytes, &password)?;
+    let db = open_db(&app, &bytes, &password)?;
     Ok(build_vault_data(db))
 }
 
@@ -820,11 +1185,8 @@ pub async fn get_entry_xml(
     let bytes = read_working_bytes(&app, &source).await?;
 
     let mut cursor = Cursor::new(&bytes);
-    let xml_bytes = keepass::Database::get_xml(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to read XML: {e}"))?;
+    let xml_bytes = keepass::Database::get_xml(&mut cursor, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to read XML: {e}"))?;
     let xml = String::from_utf8_lossy(&xml_bytes);
 
     let entry_uuid = uuid::Uuid::parse_str(&uuid).map_err(|e| format!("Invalid UUID: {e}"))?;
@@ -844,7 +1206,19 @@ pub async fn save_entry(
     let source = load_source(&app)?;
 
     let bytes = read_working_bytes(&app, &source).await?;
-    let mut db = open_db(&bytes, &password)?;
+    let mut db = open_db(&app, &bytes, &password)?;
+
+    // Resolve a "reference an existing custom icon" request (by UUID) to its
+    // CustomIconId before borrowing the entry mutably. (CustomIconId is Copy.)
+    let existing_custom: Option<keepass::db::CustomIconId> = entry
+        .custom_icon_uuid
+        .as_ref()
+        .filter(|_| entry.custom_icon_base64.is_none())
+        .and_then(|u| {
+            db.iter_all_custom_icons()
+                .find(|ci| ci.id().uuid().to_string() == *u)
+                .map(|ci| ci.id())
+        });
 
     let saved_uuid = if entry.uuid.is_empty() {
         // New entry: add to the specified group
@@ -858,7 +1232,7 @@ pub async fn save_entry(
         let id_str = e.id().to_string();
         apply_fields(&mut *e, &entry);
         // Icon must be set on the EntryMut (needs DB access for custom-icon storage)
-        apply_icon(&mut e, &entry)?;
+        apply_icon(&mut e, &entry, existing_custom)?;
         id_str
     } else {
         // Existing entry: find and update
@@ -870,21 +1244,18 @@ pub async fn save_entry(
                 .entry_mut(entry_id)
                 .ok_or_else(|| "Entry not found".to_string())?;
             apply_fields(&mut *e, &entry);
-            apply_icon(&mut e, &entry)?;
+            apply_icon(&mut e, &entry, existing_custom)?;
         }
         entry.uuid.clone()
     };
 
     // Serialize modified database
     let mut saved_bytes: Vec<u8> = Vec::new();
-    db.save(
-        &mut saved_bytes,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to save: {e}"))?;
+    db.save(&mut saved_bytes, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
 
     // Re-parse from saved bytes to build the response
-    let db2 = open_db(&saved_bytes, &password)?;
+    let db2 = open_db(&app, &saved_bytes, &password)?;
 
     let result = SaveResult {
         vault: build_vault_data(db2),
@@ -895,4 +1266,267 @@ pub async fn save_entry(
     persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn save_group(
+    app: tauri::AppHandle,
+    password: String,
+    group: GroupUpdate,
+) -> Result<SaveResult, String> {
+    let source = load_source(&app)?;
+
+    let bytes = read_working_bytes(&app, &source).await?;
+    let mut db = open_db(&app, &bytes, &password)?;
+
+    // Resolve a "reuse existing custom icon" request (by UUID) before mut-borrowing.
+    let existing_custom: Option<keepass::db::CustomIconId> = group
+        .custom_icon_uuid
+        .as_ref()
+        .filter(|_| group.custom_icon_base64.is_none())
+        .and_then(|u| {
+            db.iter_all_custom_icons()
+                .find(|ci| ci.id().uuid().to_string() == *u)
+                .map(|ci| ci.id())
+        });
+
+    let name = group.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Group name is required".to_string());
+    }
+
+    let saved_uuid = if group.uuid.is_empty() {
+        // New group under the given parent (or root).
+        let parent_id = if group.parent_uuid.is_empty() {
+            db.root().id()
+        } else {
+            let pu = uuid::Uuid::parse_str(&group.parent_uuid)
+                .map_err(|e| format!("Invalid parent UUID: {e}"))?;
+            keepass::db::GroupId::from_uuid(pu)
+        };
+        let mut parent = db
+            .group_mut(parent_id)
+            .ok_or_else(|| "Parent group not found".to_string())?;
+        let mut g = parent.add_group();
+        g.name = name;
+        apply_group_icon(&mut g, &group, existing_custom)?;
+        g.id().to_string()
+    } else {
+        let gu = uuid::Uuid::parse_str(&group.uuid)
+            .map_err(|e| format!("Invalid group UUID: {e}"))?;
+        let gid = keepass::db::GroupId::from_uuid(gu);
+        {
+            let mut g = db
+                .group_mut(gid)
+                .ok_or_else(|| "Group not found".to_string())?;
+            g.name = name;
+            apply_group_icon(&mut g, &group, existing_custom)?;
+        }
+        group.uuid.clone()
+    };
+
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(&mut saved_bytes, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
+
+    let db2 = open_db(&app, &saved_bytes, &password)?;
+    let result = SaveResult {
+        vault: build_vault_data(db2),
+        saved_uuid,
+    };
+
+    persist_bytes(&app, &source, saved_bytes).await?;
+
+    Ok(result)
+}
+
+// ── Database creation / key management ────────────────────────────────────────
+
+/// Create a brand-new KDBX4 database. Prompts for a save location, writes an
+/// empty database named `name` encrypted with `password`, makes it the active
+/// (local) source, and returns its vault data. `Ok(None)` if the user cancels.
+#[tauri::command]
+pub async fn create_database(
+    app: tauri::AppHandle,
+    name: String,
+    password: String,
+) -> Result<Option<VaultData>, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Database name is required".to_string());
+    }
+    if password.is_empty() {
+        return Err("Password is required".to_string());
+    }
+
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("KeePass database", &["kdbx"])
+        .set_file_name(format!("{name}.kdbx"))
+        .blocking_save_file();
+    let Some(file) = picked else {
+        return Ok(None); // user cancelled
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("Invalid file path: {e}"))?;
+
+    // A fresh database defaults to KDBX4 (the only version we can save).
+    let mut db = keepass::Database::new();
+    {
+        let mut root = db.root_mut();
+        root.name = name.clone();
+    }
+    db.meta.database_name = Some(name);
+    db.meta.generator = Some("KeeRust".to_string());
+
+    // New database: password only, no key file yet.
+    let mut bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to create database: {e}"))?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    // Switch the active source to the new file and clear any prior key file.
+    let source = VaultSource::Local {
+        path: path.to_string_lossy().to_string(),
+    };
+    save_source(&app, &source)?;
+    save_keyfile_path(&app, None)?;
+
+    let db2 = open_db(&app, &bytes, &password)?;
+    Ok(Some(build_vault_data(db2)))
+}
+
+/// Rename the database (sets the root group name and the meta database name).
+#[tauri::command]
+pub async fn rename_database(
+    app: tauri::AppHandle,
+    password: String,
+    name: String,
+) -> Result<VaultData, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Database name is required".to_string());
+    }
+    mutate_and_persist(app, password, move |db| {
+        {
+            let mut root = db.root_mut();
+            root.name = name.clone();
+        }
+        db.meta.database_name = Some(name);
+        Ok(())
+    })
+    .await
+}
+
+/// Change the master password. Verifies the current key, then re-encrypts the
+/// database with `new_password` (keeping any associated key file in the key).
+#[tauri::command]
+pub async fn change_master_password(
+    app: tauri::AppHandle,
+    password: String,
+    new_password: String,
+) -> Result<(), String> {
+    if new_password.is_empty() {
+        return Err("New password cannot be empty".to_string());
+    }
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+
+    let mut db = open_db(&app, &bytes, &password)?; // verifies the current key
+    db.meta.master_key_changed = Some(keepass::db::Times::now());
+
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(&mut saved_bytes, db_key(&app, &new_password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
+    persist_bytes(&app, &source, saved_bytes).await?;
+    Ok(())
+}
+
+/// Generate a new 32-byte binary key file, save it to a chosen location, and add
+/// it to the database's master key (re-encrypting with password + key file).
+/// Returns the key file path, or `Ok(None)` if the user cancels.
+#[tauri::command]
+pub async fn generate_key_file(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<Option<String>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Key file", &["key"])
+        .set_file_name("keerust.key")
+        .blocking_save_file();
+    let Some(file) = picked else {
+        return Ok(None); // user cancelled
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("Invalid file path: {e}"))?;
+
+    // 32 cryptographically-random bytes (UUID v4 = 16 random bytes each). A
+    // 32-byte binary key file is used verbatim by KeePass 2.x and KeePassXC.
+    let mut key_bytes = Vec::with_capacity(32);
+    key_bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    key_bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    std::fs::write(&path, &key_bytes).map_err(|e| format!("Failed to write key file: {e}"))?;
+
+    // Re-encrypt the database so the key file is now required to open it.
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+    let mut db = open_db(&app, &bytes, &password)?; // current key
+    db.meta.master_key_changed = Some(keepass::db::Times::now());
+
+    let new_key = {
+        let mut f = std::fs::File::open(&path)
+            .map_err(|e| format!("Failed to open key file: {e}"))?;
+        keepass::DatabaseKey::new()
+            .with_password(&password)
+            .with_keyfile(&mut f)
+            .map_err(|e| format!("Failed to read key file: {e}"))?
+    };
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(&mut saved_bytes, new_key)
+        .map_err(|e| format!("Failed to save: {e}"))?;
+    persist_bytes(&app, &source, saved_bytes).await?;
+
+    // Persist the key file path so future opens include it.
+    let path_str = path.to_string_lossy().to_string();
+    save_keyfile_path(&app, Some(path_str.clone()))?;
+    Ok(Some(path_str))
+}
+
+/// Remove the key file from the database's master key: re-encrypt with the
+/// password only, then clear the stored key file path. The on-disk key file is
+/// left in place (the user can delete it themselves).
+#[tauri::command]
+pub async fn remove_key_file(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("A password is required to remove the key file".to_string());
+    }
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+
+    let mut db = open_db(&app, &bytes, &password)?; // current key (password + key file)
+    db.meta.master_key_changed = Some(keepass::db::Times::now());
+
+    // Re-encrypt with the password only — explicitly NOT `db_key`, which would
+    // re-add the key file we're dropping.
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut saved_bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to save: {e}"))?;
+    persist_bytes(&app, &source, saved_bytes).await?;
+
+    save_keyfile_path(&app, None)?;
+    Ok(())
 }

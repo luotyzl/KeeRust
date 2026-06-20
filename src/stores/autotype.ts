@@ -73,11 +73,6 @@ async function runAutotypeForWindow(
   const filter = makeFilter(buildWindowInfo(title, url));
   let matches = filterGetEntries(getApp().vaultData, filter);
 
-  // Exactly one match → type it straight away (KeeWeb directAutotype).
-  if (matches.length === 1) {
-    await typeCreds(matches[0]);
-    return;
-  }
   // No match → relax url→title so the select view opens with candidates.
   if (matches.length === 0) {
     if (filter.useUrl) {
@@ -86,6 +81,13 @@ async function runAutotypeForWindow(
     }
     matches = filterGetEntries(getApp().vaultData, filter);
     if (matches.length === 0 && filter.useTitle) filter.useTitle = false;
+  }
+
+  // Exactly one match → type it straight away (KeeWeb directAutotype),
+  // including when the relaxed filter narrows down to a single candidate.
+  if (matches.length === 1) {
+    await typeCreds(matches[0]);
+    return;
   }
   await openSelectView(filter);
 }
