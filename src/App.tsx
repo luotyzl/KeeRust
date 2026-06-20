@@ -11,6 +11,7 @@ import type { VaultSource } from "./types";
 
 import ConfigScreen from "./components/screens/ConfigScreen";
 import UnlockScreen from "./components/screens/UnlockScreen";
+import NewDatabaseScreen from "./components/screens/NewDatabaseScreen";
 import VaultScreen from "./components/screens/VaultScreen";
 import SelectScreen from "./components/screens/SelectScreen";
 import SettingsScreen from "./components/screens/SettingsScreen";
@@ -96,6 +97,7 @@ export default function App() {
     <>
       {screen === "config" && <ConfigScreen />}
       {screen === "unlock" && <UnlockScreen />}
+      {screen === "new" && <NewDatabaseScreen />}
       {screen === "vault" && <VaultScreen />}
       {screen === "settings" && <SettingsScreen />}
       {screen === "select" && <SelectScreen />}

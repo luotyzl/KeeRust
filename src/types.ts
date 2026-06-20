@@ -136,7 +136,13 @@ export interface SearchFields {
   custom: boolean;
 }
 
-export type ScreenName = "config" | "unlock" | "vault" | "select" | "settings";
+export type ScreenName =
+  | "config"
+  | "unlock"
+  | "vault"
+  | "select"
+  | "settings"
+  | "new";
 
 // Which set of entries the middle pane shows (driven by the sidebar menu).
 export type ActiveView =

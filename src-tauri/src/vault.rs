@@ -3,9 +3,12 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use tauri::{Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::attachments::mime_type;
-use crate::source::{load_source, VaultSource};
+use crate::source::{
+    load_keyfile_path, load_source, save_keyfile_path, save_source, VaultSource,
+};
 
 // ── Outbound data structures ──────────────────────────────────────────────────
 
@@ -153,14 +156,33 @@ fn cache_path(app: &tauri::AppHandle) -> std::path::PathBuf {
 
 // ── Open / persist helpers ──────────────────────────────────────────────────────
 
-/// Decrypt KDBX bytes with the master password.
-fn open_db(bytes: &[u8], password: &str) -> Result<keepass::Database, String> {
+/// Build the master key (password + optional key file) for the active vault.
+/// The key file path is persisted separately (see `source.rs`) and applied to
+/// every open/save, so individual commands only need to pass the password.
+fn db_key(app: &tauri::AppHandle, password: &str) -> Result<keepass::DatabaseKey, String> {
+    let mut key = keepass::DatabaseKey::new();
+    if !password.is_empty() {
+        key = key.with_password(password);
+    }
+    if let Some(path) = load_keyfile_path(app) {
+        let mut f = std::fs::File::open(&path)
+            .map_err(|e| format!("Failed to open key file: {e}"))?;
+        key = key
+            .with_keyfile(&mut f)
+            .map_err(|e| format!("Failed to read key file: {e}"))?;
+    }
+    Ok(key)
+}
+
+/// Decrypt KDBX bytes with the active vault's master key (password + key file).
+fn open_db(
+    app: &tauri::AppHandle,
+    bytes: &[u8],
+    password: &str,
+) -> Result<keepass::Database, String> {
     let mut cursor = Cursor::new(bytes);
-    keepass::Database::open(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(password),
-    )
-    .map_err(|e| format!("Failed to open database: {e}"))
+    keepass::Database::open(&mut cursor, db_key(app, password)?)
+        .map_err(|e| format!("Failed to open database: {e}"))
 }
 
 /// Read the database bytes to work from. WebDAV is cache-first (use the local
@@ -706,7 +728,7 @@ pub async fn open_database(
     // Local files: read directly, no cache and no background sync.
     if source.is_local() {
         let bytes = source.fetch().await?;
-        let db = open_db(&bytes, &password)?;
+        let db = open_db(&app, &bytes, &password)?;
         return Ok(build_vault_data(db));
     }
 
@@ -740,7 +762,7 @@ pub async fn open_database(
         b
     };
 
-    let db = open_db(&bytes, &password)?;
+    let db = open_db(&app, &bytes, &password)?;
 
     // Background: check if remote has a newer version than what we just served
     if used_cache {
@@ -812,18 +834,15 @@ where
     let source = load_source(&app)?;
 
     let bytes = read_working_bytes(&app, &source).await?;
-    let mut db = open_db(&bytes, &password)?;
+    let mut db = open_db(&app, &bytes, &password)?;
 
     mutate(&mut db)?;
 
     let mut saved_bytes: Vec<u8> = Vec::new();
-    db.save(
-        &mut saved_bytes,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to save: {e}"))?;
+    db.save(&mut saved_bytes, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
 
-    let db2 = open_db(&saved_bytes, &password)?;
+    let db2 = open_db(&app, &saved_bytes, &password)?;
     persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(build_vault_data(db2))
@@ -1089,7 +1108,7 @@ pub async fn force_sync(
         let _ = std::fs::write(&cache, &bytes);
     }
 
-    let db = open_db(&bytes, &password)?;
+    let db = open_db(&app, &bytes, &password)?;
     Ok(build_vault_data(db))
 }
 
@@ -1166,11 +1185,8 @@ pub async fn get_entry_xml(
     let bytes = read_working_bytes(&app, &source).await?;
 
     let mut cursor = Cursor::new(&bytes);
-    let xml_bytes = keepass::Database::get_xml(
-        &mut cursor,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to read XML: {e}"))?;
+    let xml_bytes = keepass::Database::get_xml(&mut cursor, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to read XML: {e}"))?;
     let xml = String::from_utf8_lossy(&xml_bytes);
 
     let entry_uuid = uuid::Uuid::parse_str(&uuid).map_err(|e| format!("Invalid UUID: {e}"))?;
@@ -1190,7 +1206,7 @@ pub async fn save_entry(
     let source = load_source(&app)?;
 
     let bytes = read_working_bytes(&app, &source).await?;
-    let mut db = open_db(&bytes, &password)?;
+    let mut db = open_db(&app, &bytes, &password)?;
 
     // Resolve a "reference an existing custom icon" request (by UUID) to its
     // CustomIconId before borrowing the entry mutably. (CustomIconId is Copy.)
@@ -1235,14 +1251,11 @@ pub async fn save_entry(
 
     // Serialize modified database
     let mut saved_bytes: Vec<u8> = Vec::new();
-    db.save(
-        &mut saved_bytes,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to save: {e}"))?;
+    db.save(&mut saved_bytes, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
 
     // Re-parse from saved bytes to build the response
-    let db2 = open_db(&saved_bytes, &password)?;
+    let db2 = open_db(&app, &saved_bytes, &password)?;
 
     let result = SaveResult {
         vault: build_vault_data(db2),
@@ -1264,7 +1277,7 @@ pub async fn save_group(
     let source = load_source(&app)?;
 
     let bytes = read_working_bytes(&app, &source).await?;
-    let mut db = open_db(&bytes, &password)?;
+    let mut db = open_db(&app, &bytes, &password)?;
 
     // Resolve a "reuse existing custom icon" request (by UUID) before mut-borrowing.
     let existing_custom: Option<keepass::db::CustomIconId> = group
@@ -1313,13 +1326,10 @@ pub async fn save_group(
     };
 
     let mut saved_bytes: Vec<u8> = Vec::new();
-    db.save(
-        &mut saved_bytes,
-        keepass::DatabaseKey::new().with_password(&password),
-    )
-    .map_err(|e| format!("Failed to save: {e}"))?;
+    db.save(&mut saved_bytes, db_key(&app, &password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
 
-    let db2 = open_db(&saved_bytes, &password)?;
+    let db2 = open_db(&app, &saved_bytes, &password)?;
     let result = SaveResult {
         vault: build_vault_data(db2),
         saved_uuid,
@@ -1328,4 +1338,195 @@ pub async fn save_group(
     persist_bytes(&app, &source, saved_bytes).await?;
 
     Ok(result)
+}
+
+// ── Database creation / key management ────────────────────────────────────────
+
+/// Create a brand-new KDBX4 database. Prompts for a save location, writes an
+/// empty database named `name` encrypted with `password`, makes it the active
+/// (local) source, and returns its vault data. `Ok(None)` if the user cancels.
+#[tauri::command]
+pub async fn create_database(
+    app: tauri::AppHandle,
+    name: String,
+    password: String,
+) -> Result<Option<VaultData>, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Database name is required".to_string());
+    }
+    if password.is_empty() {
+        return Err("Password is required".to_string());
+    }
+
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("KeePass database", &["kdbx"])
+        .set_file_name(format!("{name}.kdbx"))
+        .blocking_save_file();
+    let Some(file) = picked else {
+        return Ok(None); // user cancelled
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("Invalid file path: {e}"))?;
+
+    // A fresh database defaults to KDBX4 (the only version we can save).
+    let mut db = keepass::Database::new();
+    {
+        let mut root = db.root_mut();
+        root.name = name.clone();
+    }
+    db.meta.database_name = Some(name);
+    db.meta.generator = Some("KeeRust".to_string());
+
+    // New database: password only, no key file yet.
+    let mut bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to create database: {e}"))?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    // Switch the active source to the new file and clear any prior key file.
+    let source = VaultSource::Local {
+        path: path.to_string_lossy().to_string(),
+    };
+    save_source(&app, &source)?;
+    save_keyfile_path(&app, None)?;
+
+    let db2 = open_db(&app, &bytes, &password)?;
+    Ok(Some(build_vault_data(db2)))
+}
+
+/// Rename the database (sets the root group name and the meta database name).
+#[tauri::command]
+pub async fn rename_database(
+    app: tauri::AppHandle,
+    password: String,
+    name: String,
+) -> Result<VaultData, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Database name is required".to_string());
+    }
+    mutate_and_persist(app, password, move |db| {
+        {
+            let mut root = db.root_mut();
+            root.name = name.clone();
+        }
+        db.meta.database_name = Some(name);
+        Ok(())
+    })
+    .await
+}
+
+/// Change the master password. Verifies the current key, then re-encrypts the
+/// database with `new_password` (keeping any associated key file in the key).
+#[tauri::command]
+pub async fn change_master_password(
+    app: tauri::AppHandle,
+    password: String,
+    new_password: String,
+) -> Result<(), String> {
+    if new_password.is_empty() {
+        return Err("New password cannot be empty".to_string());
+    }
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+
+    let mut db = open_db(&app, &bytes, &password)?; // verifies the current key
+    db.meta.master_key_changed = Some(keepass::db::Times::now());
+
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(&mut saved_bytes, db_key(&app, &new_password)?)
+        .map_err(|e| format!("Failed to save: {e}"))?;
+    persist_bytes(&app, &source, saved_bytes).await?;
+    Ok(())
+}
+
+/// Generate a new 32-byte binary key file, save it to a chosen location, and add
+/// it to the database's master key (re-encrypting with password + key file).
+/// Returns the key file path, or `Ok(None)` if the user cancels.
+#[tauri::command]
+pub async fn generate_key_file(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<Option<String>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Key file", &["key"])
+        .set_file_name("keerust.key")
+        .blocking_save_file();
+    let Some(file) = picked else {
+        return Ok(None); // user cancelled
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("Invalid file path: {e}"))?;
+
+    // 32 cryptographically-random bytes (UUID v4 = 16 random bytes each). A
+    // 32-byte binary key file is used verbatim by KeePass 2.x and KeePassXC.
+    let mut key_bytes = Vec::with_capacity(32);
+    key_bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    key_bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    std::fs::write(&path, &key_bytes).map_err(|e| format!("Failed to write key file: {e}"))?;
+
+    // Re-encrypt the database so the key file is now required to open it.
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+    let mut db = open_db(&app, &bytes, &password)?; // current key
+    db.meta.master_key_changed = Some(keepass::db::Times::now());
+
+    let new_key = {
+        let mut f = std::fs::File::open(&path)
+            .map_err(|e| format!("Failed to open key file: {e}"))?;
+        keepass::DatabaseKey::new()
+            .with_password(&password)
+            .with_keyfile(&mut f)
+            .map_err(|e| format!("Failed to read key file: {e}"))?
+    };
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(&mut saved_bytes, new_key)
+        .map_err(|e| format!("Failed to save: {e}"))?;
+    persist_bytes(&app, &source, saved_bytes).await?;
+
+    // Persist the key file path so future opens include it.
+    let path_str = path.to_string_lossy().to_string();
+    save_keyfile_path(&app, Some(path_str.clone()))?;
+    Ok(Some(path_str))
+}
+
+/// Remove the key file from the database's master key: re-encrypt with the
+/// password only, then clear the stored key file path. The on-disk key file is
+/// left in place (the user can delete it themselves).
+#[tauri::command]
+pub async fn remove_key_file(
+    app: tauri::AppHandle,
+    password: String,
+) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("A password is required to remove the key file".to_string());
+    }
+    let source = load_source(&app)?;
+    let bytes = read_working_bytes(&app, &source).await?;
+
+    let mut db = open_db(&app, &bytes, &password)?; // current key (password + key file)
+    db.meta.master_key_changed = Some(keepass::db::Times::now());
+
+    // Re-encrypt with the password only — explicitly NOT `db_key`, which would
+    // re-add the key file we're dropping.
+    let mut saved_bytes: Vec<u8> = Vec::new();
+    db.save(
+        &mut saved_bytes,
+        keepass::DatabaseKey::new().with_password(&password),
+    )
+    .map_err(|e| format!("Failed to save: {e}"))?;
+    persist_bytes(&app, &source, saved_bytes).await?;
+
+    save_keyfile_path(&app, None)?;
+    Ok(())
 }
