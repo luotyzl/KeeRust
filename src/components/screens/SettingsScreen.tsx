@@ -390,7 +390,7 @@ export default function SettingsScreen() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Row label="App" value="KeeRust" />
-            <Row label="Version" value="0.1.0" />
+            <Row label="Version" value={__APP_VERSION__} />
           </CardContent>
         </Card>
       </div>
