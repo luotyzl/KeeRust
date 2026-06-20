@@ -114,6 +114,7 @@ export default function SettingsScreen() {
   const [pwError, setPwError] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
+  const [switchOpen, setSwitchOpen] = useState(false);
 
   useEffect(() => {
     if (hasVault) {
@@ -192,6 +193,13 @@ export default function SettingsScreen() {
     } finally {
       setGenBusy(false);
     }
+  }
+
+  // Lock the open vault and return to the start screen to pick another database.
+  function confirmSwitchDatabase() {
+    setSwitchOpen(false);
+    lock();
+    setApp({ screen: "config" });
   }
 
   async function removeKeyFile() {
@@ -334,7 +342,26 @@ export default function SettingsScreen() {
               </div>
             )}
             <Row label="Source" value={vaultIsLocal ? "Local file" : "WebDAV"} />
-            <Row label="Location" value={sourceLabel() || "—"} />
+            {hasVault ? (
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-muted-foreground">Location</span>
+                <div className="flex min-w-0 items-center gap-1">
+                  <span className="truncate text-right" title={sourceLabel()}>
+                    {sourceLabel() || "—"}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Lock and open a different database"
+                    onClick={() => setSwitchOpen(true)}
+                  >
+                    <X />
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Row label="Location" value={sourceLabel() || "—"} />
+            )}
             {hasVault && (
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="text-muted-foreground">Key file</span>
@@ -395,6 +422,27 @@ export default function SettingsScreen() {
         </Card>
       </div>
       </ScrollArea>
+
+      {/* Lock & switch to a different database */}
+      <Dialog open={switchOpen} onOpenChange={setSwitchOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Open a Different Database</DialogTitle>
+            <DialogDescription>
+              This locks the current database and returns to the start screen, where
+              you can open or set up another one.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSwitchOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmSwitchDatabase}>
+              Lock &amp; Switch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Rename database */}
       <Dialog open={renameOpen} onOpenChange={(o) => !renameBusy && setRenameOpen(o)}>

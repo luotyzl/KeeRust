@@ -63,16 +63,14 @@ pub fn run() {
                     if shortcut == &ctrl_k_h {
                         show_main_window(app);
                     } else if shortcut == &autotype_h {
-                        // Auto-type targets *other* applications. If KeeRust is the
-                        // active window, ignore the hotkey so it never types into
-                        // our own UI.
-                        if let Some(win) = app.get_webview_window("main") {
-                            if win.is_focused().unwrap_or(false) {
-                                return;
-                            }
-                        }
                         // Capture the target window NOW, before we touch focus.
                         let (hwnd, title, url) = autotype::capture_foreground();
+                        // Auto-type targets *other* applications. If KeeRust itself
+                        // is the foreground window, ignore the hotkey so it never
+                        // types into our own UI.
+                        if autotype::is_own_window(app, hwnd) {
+                            return;
+                        }
                         let state = app.state::<AutotypeState>();
                         *state.target_hwnd.lock().unwrap() =
                             if hwnd != 0 { Some(hwnd) } else { None };

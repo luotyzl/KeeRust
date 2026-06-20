@@ -105,9 +105,22 @@ export default function UnlockScreen() {
         </CardHeader>
         <CardContent className="space-y-4">
           {sourceLabel() && (
-            <p className="text-muted-foreground text-center text-xs break-all">
-              {sourceLabel()}
-            </p>
+            <div className="flex items-start justify-center gap-1">
+              <p className="text-muted-foreground text-center text-xs break-all">
+                {sourceLabel()}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="-mt-1 shrink-0"
+                title="Open a different database"
+                aria-label="Open a different database"
+                onClick={() => setApp({ screen: "config" })}
+              >
+                <X />
+              </Button>
+            </div>
           )}
           <form id="unlock-form" className="space-y-4" noValidate onSubmit={submit}>
             <div className="space-y-1.5">

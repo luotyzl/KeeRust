@@ -224,6 +224,29 @@ pub fn capture_foreground() -> (isize, String, Option<String>) {
     (hwnd, title, url)
 }
 
+/// Whether the given foreground window handle is KeeRust's own window. When the
+/// auto-type hotkey is pressed while our app is the active window there's nothing
+/// to type into — auto-type targets *other* applications — so the caller ignores
+/// it. Comparing the real Win32 foreground HWND is more reliable than the
+/// WebView's `is_focused()`, which can report stale focus.
+#[cfg(windows)]
+pub fn is_own_window(app: &AppHandle, fg_hwnd: isize) -> bool {
+    if fg_hwnd == 0 {
+        return false;
+    }
+    if let Some(win) = app.get_webview_window("main") {
+        if let Ok(h) = win.hwnd() {
+            return h.0 as isize == fg_hwnd;
+        }
+    }
+    false
+}
+
+#[cfg(not(windows))]
+pub fn is_own_window(_app: &AppHandle, _fg_hwnd: isize) -> bool {
+    false
+}
+
 // ── Keystroke injection ─────────────────────────────────────────────────────────
 
 /// What to type once the target window has focus.
