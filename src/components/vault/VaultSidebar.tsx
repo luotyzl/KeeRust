@@ -1,7 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  KeyRound,
   List,
   Lock,
   Paperclip,

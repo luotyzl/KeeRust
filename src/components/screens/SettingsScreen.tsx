@@ -3,9 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
   Database,
+  Images,
   Keyboard,
   KeyRound,
   Lock,
+  MoreHorizontal,
   Moon,
   Palette,
   Pencil,
@@ -18,7 +20,7 @@ import { showToast } from "@/stores/toast";
 import { openExternal } from "@/lib/openExternal";
 import { useTheme } from "@/components/theme-provider";
 import { useSettings, setSetting } from "@/stores/settings";
-import type { KdfKind, VaultData } from "@/types";
+import type { CustomIconData, KdfKind, VaultData } from "@/types";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,6 +38,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -46,6 +54,10 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+
+// Stable empty default so the store selector never returns a fresh array (which
+// would loop useSyncExternalStore — see src/lib/store.ts).
+const EMPTY_ICONS: CustomIconData[] = [];
 
 // Last path segment of a key-file path, for display.
 function baseName(path: string): string {
@@ -119,6 +131,7 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function SettingsScreen() {
   const vaultIsLocal = useApp((s) => s.vaultIsLocal);
   const hasVault = useApp((s) => s.vaultData != null);
+  const customIcons = useApp((s) => s.vaultData?.custom_icons) ?? EMPTY_ICONS;
   const { theme, setTheme } = useTheme();
   const minimizeOnClose = useSettings((s) => s.minimizeOnClose);
   const autoLockIdleMinutes = useSettings((s) => s.autoLockIdleMinutes);
@@ -141,6 +154,8 @@ export default function SettingsScreen() {
   const [pwBusy, setPwBusy] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
+  const [iconsOpen, setIconsOpen] = useState(false);
+  const [iconBusy, setIconBusy] = useState(false);
   const [kdfOpen, setKdfOpen] = useState(false);
   const [kdfKind, setKdfKind] = useState<KdfKind>("argon2d");
   const [kdfIterations, setKdfIterations] = useState("2");
@@ -279,6 +294,24 @@ export default function SettingsScreen() {
       setKdfError(String(err));
     } finally {
       setKdfBusy(false);
+    }
+  }
+
+  async function deleteIcon(uuid: string) {
+    if (iconBusy) return;
+    setIconBusy(true);
+    try {
+      const vault = await invoke<VaultData>("delete_custom_icon", {
+        password: getApp().masterPassword,
+        uuid,
+      });
+      setApp({ vaultData: vault });
+      markSyncPending();
+      showToast("Icon deleted");
+    } catch (err) {
+      showToast("Failed: " + String(err));
+    } finally {
+      setIconBusy(false);
     }
   }
 
@@ -491,32 +524,45 @@ export default function SettingsScreen() {
                 )}
               </div>
             )}
-            <Separator />
-            <div className="flex flex-wrap gap-2">
-              {hasVault && (
-                <>
-                  <Button variant="outline" size="sm" onClick={openChangePassword}>
-                    <Lock /> Change master password
+            {hasVault && (
+              <>
+                <Separator />
+                <div className="flex items-center justify-end gap-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        <MoreHorizontal /> Actions
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuItem onClick={openChangePassword}>
+                        <Lock /> Change master password
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={openKdf}>
+                        <SlidersHorizontal /> Key derivation
+                      </DropdownMenuItem>
+                      {!keyFile && (
+                        <DropdownMenuItem disabled={genBusy} onClick={generateKeyFile}>
+                          <KeyRound /> {genBusy ? "Generating…" : "Generate key file"}
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onClick={() => setIconsOpen(true)}>
+                        <Images /> Manage icons
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    title="Lock vault"
+                    aria-label="Lock vault"
+                    onClick={lock}
+                  >
+                    <Lock />
                   </Button>
-                  <Button variant="outline" size="sm" onClick={openKdf}>
-                    <SlidersHorizontal /> Key derivation
-                  </Button>
-                  {!keyFile && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={genBusy}
-                      onClick={generateKeyFile}
-                    >
-                      <KeyRound /> {genBusy ? "Generating…" : "Generate key file"}
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={lock}>
-                    Lock vault
-                  </Button>
-                </>
-              )}
-            </div>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -544,6 +590,55 @@ export default function SettingsScreen() {
         </Card>
       </div>
       </ScrollArea>
+
+      {/* Manage saved custom icons */}
+      <Dialog open={iconsOpen} onOpenChange={(o) => !iconBusy && setIconsOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Manage Icons</DialogTitle>
+            <DialogDescription>
+              Custom icons saved in this database. Deleting one resets any entries
+              or groups using it to a default icon.
+            </DialogDescription>
+          </DialogHeader>
+          {customIcons.length === 0 ? (
+            <p className="text-muted-foreground py-4 text-center text-sm">
+              No custom icons saved.
+            </p>
+          ) : (
+            <ScrollArea viewportClassName="max-h-72">
+              <div className="grid grid-cols-6 gap-2 p-0.5">
+                {customIcons.map((ci) => (
+                  <div
+                    key={ci.uuid}
+                    className="group bg-muted/40 relative flex aspect-square items-center justify-center rounded-md border"
+                  >
+                    <img
+                      className="size-7 rounded-sm object-contain"
+                      src={`data:image/png;base64,${ci.base64}`}
+                      alt=""
+                    />
+                    <button
+                      type="button"
+                      disabled={iconBusy}
+                      title="Delete icon"
+                      onClick={() => deleteIcon(ci.uuid)}
+                      className="bg-destructive text-destructive-foreground absolute -top-1.5 -right-1.5 hidden size-4 items-center justify-center rounded-full group-hover:flex disabled:opacity-60"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={iconBusy} onClick={() => setIconsOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Lock & switch to a different database */}
       <Dialog open={switchOpen} onOpenChange={setSwitchOpen}>

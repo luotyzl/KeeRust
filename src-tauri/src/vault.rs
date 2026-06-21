@@ -1288,6 +1288,28 @@ pub async fn delete_entry_attachment(
     .await
 }
 
+/// Delete a custom icon from the database. Any entries or groups still using it
+/// revert to a default icon — the crate clears those references for us.
+#[tauri::command]
+pub async fn delete_custom_icon(
+    app: tauri::AppHandle,
+    password: String,
+    uuid: String,
+) -> Result<VaultData, String> {
+    mutate_and_persist(app, password, move |db| {
+        let id = db
+            .iter_all_custom_icons()
+            .find(|ci| ci.id().uuid().to_string() == uuid)
+            .map(|ci| ci.id())
+            .ok_or_else(|| "Icon not found".to_string())?;
+        db.custom_icon_mut(id)
+            .ok_or_else(|| "Icon not found".to_string())?
+            .remove();
+        Ok(())
+    })
+    .await
+}
+
 /// Manual "Sync" button: reconcile the local copy with the origin in both
 /// directions so nothing is lost on either side.
 ///
