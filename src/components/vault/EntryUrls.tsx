@@ -1,12 +1,6 @@
-import { Copy, ExternalLink, Link2, MoreHorizontal } from "lucide-react";
+import { Copy } from "lucide-react";
 import { copyText } from "@/stores/toast";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 export interface UrlRow {
   label: string;
@@ -18,16 +12,6 @@ export interface UrlRow {
 function urlHref(value: string): string {
   const v = value.trim();
   return /^[a-z][\w+.-]*:\/\//i.test(v) ? v : "https://" + v;
-}
-
-// Open the URL the same way an <a target="_blank"> would, so behavior matches
-// the clickable link text.
-function openUrl(value: string): void {
-  const a = document.createElement("a");
-  a.href = urlHref(value);
-  a.target = "_blank";
-  a.rel = "noreferrer";
-  a.click();
 }
 
 export default function EntryUrls({ urls }: { urls: UrlRow[] }) {
@@ -50,35 +34,11 @@ export default function EntryUrls({ urls }: { urls: UrlRow[] }) {
             <Button
               variant="ghost"
               size="icon-sm"
-              className="text-primary"
-              title="Open in browser"
-              onClick={() => openUrl(u.value)}
-            >
-              <Link2 />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
               title="Copy"
               onClick={() => copyText(u.value, u.label)}
             >
               <Copy />
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" className="rounded-full border" title="More">
-                  <MoreHorizontal />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => openUrl(u.value)}>
-                  <ExternalLink /> Open in browser
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => copyText(u.value, u.label)}>
-                  <Copy /> Copy URL
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
       ))}

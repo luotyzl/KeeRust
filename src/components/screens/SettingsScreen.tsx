@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
   Database,
+  Keyboard,
   KeyRound,
   Lock,
   Moon,
@@ -47,6 +48,29 @@ import { Separator } from "@/components/ui/separator";
 // Last path segment of a key-file path, for display.
 function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
+}
+
+// A single keyboard key, styled like a physical keycap.
+function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="bg-muted text-foreground inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-xs">
+      {children}
+    </kbd>
+  );
+}
+
+// A shortcut shown as "A + B + C".
+function Shortcut({ keys }: { keys: string[] }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {keys.map((k, i) => (
+        <span key={k} className="inline-flex items-center gap-1">
+          {i > 0 && <span className="text-muted-foreground text-xs">+</span>}
+          <Kbd>{k}</Kbd>
+        </span>
+      ))}
+    </span>
+  );
 }
 
 // Inactivity options (value = minutes; 0 = never).
@@ -313,6 +337,25 @@ export default function SettingsScreen() {
               checked={autoLockOnSystemLock}
               onChange={(v) => setSetting("autoLockOnSystemLock", v)}
             />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Keyboard className="size-4" /> Auto Type
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-muted-foreground text-sm">
+              While another app is focused, press one of these global shortcuts to
+              auto-type the matching entry's credentials into it:
+            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Shortcut keys={["Alt", "Shift", "T"]} />
+              <span className="text-muted-foreground">or</span>
+              <Shortcut keys={["Ctrl", "T"]} />
+            </div>
           </CardContent>
         </Card>
 

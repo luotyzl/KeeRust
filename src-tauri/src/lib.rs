@@ -47,10 +47,13 @@ fn quit_app(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Ctrl+K = bring app forward; Alt+Shift+T = auto-type (KeeWeb's default).
+    // Ctrl+K = bring app forward; Alt+Shift+T (KeeWeb's default) and Ctrl+T both
+    // trigger auto-type.
     let ctrl_k = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK);
     let autotype_sc = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyT);
-    let (ctrl_k_h, autotype_h) = (ctrl_k.clone(), autotype_sc.clone());
+    let autotype_ctrl_t = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyT);
+    let (ctrl_k_h, autotype_h, autotype_ctrl_t_h) =
+        (ctrl_k.clone(), autotype_sc.clone(), autotype_ctrl_t.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -62,7 +65,7 @@ pub fn run() {
                     }
                     if shortcut == &ctrl_k_h {
                         show_main_window(app);
-                    } else if shortcut == &autotype_h {
+                    } else if shortcut == &autotype_h || shortcut == &autotype_ctrl_t_h {
                         // Capture the target window NOW, before we touch focus.
                         let (hwnd, title, url) = autotype::capture_foreground();
                         // Auto-type targets *other* applications. If KeeRust itself
@@ -106,6 +109,12 @@ pub fn run() {
             // app still launches.
             let _ = app.global_shortcut().register(ctrl_k);
             let _ = app.global_shortcut().register(autotype_sc);
+            // Ctrl+T is a popular hotkey (e.g. "new tab" in browsers), so it may
+            // already be claimed by another app — register it best-effort and just
+            // log if it's unavailable, leaving Alt+Shift+T as the fallback.
+            if let Err(e) = app.global_shortcut().register(autotype_ctrl_t) {
+                eprintln!("Could not register Ctrl+T for auto-type: {e}");
+            }
 
             // System tray: lets "close to tray" restore or quit the app.
             let open_i = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
