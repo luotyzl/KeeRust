@@ -18,18 +18,28 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 const GROUP_DEFAULT_ICON = 48; // folder
 
 function GroupForm() {
   const customIcons = useApp((s) => s.vaultData?.custom_icons ?? []);
+  const editGroup = useModals((s) => s.createGroup);
+  const editing = !!editGroup;
 
-  const [name, setName] = useState("");
-  const [selectedIconId, setSelectedIconId] = useState(GROUP_DEFAULT_ICON);
+  const [name, setName] = useState(editGroup?.name ?? "");
+  const [notes, setNotes] = useState(editGroup?.notes ?? "");
+  const [selectedIconId, setSelectedIconId] = useState(
+    editGroup ? editGroup.icon_id : GROUP_DEFAULT_ICON,
+  );
   const [selectedCustomUuid, setSelectedCustomUuid] = useState<string | null>(null);
   const [pendingCustomIcon, setPendingCustomIcon] = useState<string | null>(null);
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // The group's existing custom icon (shown until the user changes it).
+  const initialCustomIcon =
+    editGroup && editGroup.icon_id < 0 ? editGroup.custom_icon_base64 : null;
 
   const nameRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -38,8 +48,12 @@ function GroupForm() {
 
   const customByUuid = (uuid: string | null) =>
     uuid ? customIcons.find((c) => c.uuid === uuid)?.base64 ?? null : null;
+  const showInitialCustom =
+    editing && selectedIconId < 0 && !pendingCustomIcon && !selectedCustomUuid;
   const previewCustomIcon =
-    pendingCustomIcon ?? (selectedCustomUuid ? customByUuid(selectedCustomUuid) : null);
+    pendingCustomIcon ??
+    (selectedCustomUuid ? customByUuid(selectedCustomUuid) : null) ??
+    (showInitialCustom ? initialCustomIcon : null);
   const avatarBg = previewCustomIcon ? "transparent" : avatarColor(name || "Group");
 
   function pickBuiltin(id: number) {
@@ -72,9 +86,10 @@ function GroupForm() {
       const result = await invoke<SaveResult>("save_group", {
         password: getApp().masterPassword,
         group: {
-          uuid: "",
+          uuid: editGroup?.uuid ?? "",
           parent_uuid: "",
           name: n,
+          notes,
           icon_id: selectedIconId,
           custom_icon_base64: pendingCustomIcon,
           custom_icon_uuid: pendingCustomIcon ? null : selectedCustomUuid,
@@ -83,7 +98,7 @@ function GroupForm() {
       setApp({ vaultData: result.vault });
       setView({ kind: "group", uuid: result.saved_uuid });
       markSyncPending();
-      showToast("Group added");
+      showToast(editing ? "Group updated" : "Group added");
       closeCreateModal();
     } catch (err) {
       showToast("Save failed: " + String(err));
@@ -130,6 +145,17 @@ function GroupForm() {
         </div>
       </div>
 
+      <div className="space-y-1.5">
+        <Label htmlFor="group-notes">Notes</Label>
+        <Textarea
+          id="group-notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Notes for this group…"
+          rows={4}
+        />
+      </div>
+
       <DialogFooter>
         <Button variant="outline" disabled={saving} onClick={closeCreateModal}>
           Cancel
@@ -169,13 +195,14 @@ export default function CreateModal() {
   const visible = useModals((s) => s.createVisible);
   const kind = useModals((s) => s.createKind);
   const editEntry = useModals((s) => s.createEntry);
+  const editGroup = useModals((s) => s.createGroup);
 
   return (
     <Dialog open={visible} onOpenChange={(open) => !open && closeCreateModal()}>
       {kind === "group" ? (
         <DialogContent onInteractOutside={(e) => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle>New Group</DialogTitle>
+            <DialogTitle>{editGroup ? "Edit Group" : "New Group"}</DialogTitle>
           </DialogHeader>
           <GroupForm />
         </DialogContent>

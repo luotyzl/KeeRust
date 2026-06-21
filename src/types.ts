@@ -64,6 +64,7 @@ export interface CustomIconData {
 export interface GroupData {
   uuid: string;
   name: string;
+  notes: string;
   entry_count: number;
   icon_id: number;
   custom_icon_base64: string | null;

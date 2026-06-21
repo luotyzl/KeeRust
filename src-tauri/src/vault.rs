@@ -1,5 +1,5 @@
 use base64::prelude::*;
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use tauri::{Emitter, Manager};
@@ -75,6 +75,7 @@ pub struct EntryData {
 pub struct GroupData {
     pub uuid: String,
     pub name: String,
+    pub notes: String,
     pub entry_count: usize,
     pub icon_id: i64,                       // built-in icon index, or -1 if custom
     pub custom_icon_base64: Option<String>, // raw PNG data for a custom icon
@@ -149,6 +150,8 @@ pub struct GroupUpdate {
     pub uuid: String,        // empty = new group
     pub parent_uuid: String, // parent for a new group (empty = root)
     pub name: String,
+    #[serde(default)]
+    pub notes: String,
     pub icon_id: i64, // built-in icon 0-68 to set; -1 = leave existing / custom
     pub custom_icon_base64: Option<String>, // when set, store as a NEW custom icon
     pub custom_icon_uuid: Option<String>, // when set, reference an EXISTING custom icon by UUID
@@ -236,6 +239,152 @@ fn open_db(
     let mut cursor = Cursor::new(bytes);
     keepass::Database::open(&mut cursor, db_key(app, password)?)
         .map_err(|e| format!("Failed to open database: {e}"))
+}
+
+/// Whether two entries differ in everything but timestamps and history — the same
+/// comparison keepass-rs uses internally to detect a merge conflict.
+fn entries_diverged(a: &keepass::db::Entry, b: &keepass::db::Entry) -> bool {
+    let mut a = a.clone();
+    a.times = keepass::db::Times::default();
+    a.history = None;
+    let mut b = b.clone();
+    b.times = keepass::db::Times::default();
+    b.history = None;
+    a != b
+}
+
+/// keepass-rs refuses to merge two versions of the same entry/group that share a
+/// `last_modification` timestamp but differ in content — it can't tell which is
+/// newer, so it errors ("…have the same modification time but have diverged").
+/// Older KeeRust builds didn't bump the timestamp on edit, so existing databases
+/// can already be in this state.
+///
+/// Recover without losing data by nudging the *remote* copy's timestamp forward
+/// one second so the merge treats it as newer: the remote becomes the current
+/// value, and the local version is preserved in the entry's history (groups have
+/// no history, so the remote simply wins the tie). Both sides then converge.
+fn resolve_equal_timestamp_conflicts(local: &keepass::Database, remote: &mut keepass::Database) {
+    let bump = chrono::Duration::seconds(1);
+
+    // Entries (lossless: the loser is kept in history by the merge).
+    let entry_bumps: Vec<(keepass::db::EntryId, chrono::NaiveDateTime)> = local
+        .iter_all_entries()
+        .filter_map(|le| {
+            let id = le.id();
+            let re = remote.entry(id)?;
+            let (lt, rt) = (le.times.last_modification?, re.times.last_modification?);
+            (lt == rt && entries_diverged(&le, &re)).then_some((id, rt))
+        })
+        .collect();
+    for (id, t) in entry_bumps {
+        if let Some(mut re) = remote.entry_mut(id) {
+            re.times.last_modification = Some(t + bump);
+        }
+    }
+
+    // Groups (no history; the remote name/icon wins the tie).
+    let group_bumps: Vec<(keepass::db::GroupId, chrono::NaiveDateTime)> = local
+        .iter_all_groups()
+        .filter_map(|lg| {
+            let id = lg.id();
+            let rg = remote.group(id)?;
+            let (lt, rt) = (lg.times.last_modification?, rg.times.last_modification?);
+            (lt == rt && (lg.name != rg.name || lg.icon() != rg.icon())).then_some((id, rt))
+        })
+        .collect();
+    for (id, t) in group_bumps {
+        if let Some(mut rg) = remote.group_mut(id) {
+            rg.times.last_modification = Some(t + bump);
+        }
+    }
+}
+
+/// Deep-copy an attachment value (keepass-rs's `Value` isn't `Clone` because the
+/// protected variant wraps a `SecretBox`).
+fn clone_value(v: &keepass::db::Value<Vec<u8>>) -> keepass::db::Value<Vec<u8>> {
+    match v {
+        keepass::db::Value::Unprotected(b) => keepass::db::Value::Unprotected(b.clone()),
+        keepass::db::Value::Protected(b) => {
+            keepass::db::Value::Protected(SecretBox::new(Box::new(b.expose_secret().clone())))
+        }
+    }
+}
+
+/// Attachments of an entry as a sorted `(name, bytes)` list, for comparison.
+/// (`attachments_named` is on `EntryRef`, which carries the database reference the
+/// raw `Entry` doesn't have.)
+fn attachment_snapshot(e: &keepass::db::EntryRef<'_>) -> Vec<(String, Vec<u8>)> {
+    let mut atts: Vec<(String, Vec<u8>)> = e
+        .attachments_named()
+        .map(|(name, att)| (name.to_string(), attachment_bytes(&att)))
+        .collect();
+    atts.sort_by(|a, b| a.0.cmp(&b.0));
+    atts
+}
+
+/// Work around gaps in keepass-rs's merge: when the *remote* version of an entry
+/// wins, the merge copies its `fields` but NOT its expiry (which lives in `times`)
+/// nor its attachments (a literal `// TODO` in the crate). Without this an expiry
+/// or attachment change made on another device never syncs across — the merged
+/// entry keeps the local copy and gets pushed back, wiping the remote change.
+///
+/// After merging, for every entry the remote won — detected by the merged entry
+/// carrying the remote's modification time (ties are already broken toward the
+/// remote, so this is unambiguous) — re-apply the remote's expiry and, if they
+/// differ, its attachments. Entries the local side won are left untouched.
+fn fixup_merged_entries(local: &mut keepass::Database, remote: &keepass::Database) {
+    struct Fix {
+        id: keepass::db::EntryId,
+        expires: Option<bool>,
+        expiry: Option<chrono::NaiveDateTime>,
+        // `Some((names_to_remove, attachments_to_add))` only when the attachment
+        // sets differ (avoid needless churn).
+        attachments: Option<(Vec<String>, Vec<(String, keepass::db::Value<Vec<u8>>)>)>,
+    }
+
+    let fixes: Vec<Fix> = remote
+        .iter_all_entries()
+        .filter_map(|re| {
+            let id = re.id();
+            let le = local.entry(id)?;
+            if le.times.last_modification != re.times.last_modification {
+                return None; // local won (or unchanged) — leave it alone
+            }
+            let local_atts = attachment_snapshot(&le);
+            let remote_atts = attachment_snapshot(&re);
+            let attachments = if local_atts != remote_atts {
+                let remove: Vec<String> = local_atts.into_iter().map(|(name, _)| name).collect();
+                let add: Vec<(String, keepass::db::Value<Vec<u8>>)> = re
+                    .attachments_named()
+                    .map(|(name, att)| (name.to_string(), clone_value(&att.data)))
+                    .collect();
+                Some((remove, add))
+            } else {
+                None
+            };
+            Some(Fix {
+                id,
+                expires: re.times.expires,
+                expiry: re.times.expiry,
+                attachments,
+            })
+        })
+        .collect();
+
+    for fix in fixes {
+        if let Some(mut le) = local.entry_mut(fix.id) {
+            le.times.expires = fix.expires;
+            le.times.expiry = fix.expiry;
+            if let Some((remove, add)) = fix.attachments {
+                for name in remove {
+                    le.remove_attachment_by_name(&name);
+                }
+                for (name, value) in add {
+                    le.add_attachment(name, value);
+                }
+            }
+        }
+    }
 }
 
 /// Read the database bytes to work from. WebDAV is cache-first (use the local
@@ -358,10 +507,12 @@ async fn reconcile_and_persist(
     match webdav_remote_bytes_if_changed(app, &config, base_bytes).await {
         // Server changed since we cached → merge our edits into it (lossless).
         Ok(Some(remote_bytes)) => {
-            let remote_db = open_db(app, &remote_bytes, remote_password)
+            let mut remote_db = open_db(app, &remote_bytes, remote_password)
                 .map_err(|e| format!("Failed to open the remote database to merge: {e}"))?;
+            resolve_equal_timestamp_conflicts(&db, &mut remote_db);
             db.merge(&remote_db)
                 .map_err(|e| format!("Failed to merge with the remote database: {e}"))?;
+            fixup_merged_entries(&mut db, &remote_db);
         }
         // Server unchanged → safe to push our version as-is.
         Ok(None) => {}
@@ -600,6 +751,12 @@ fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
             entry.times.expiry = update.expiry.as_ref().and_then(|d| parse_expiry(d));
         }
     }
+
+    // Stamp the modification time. `apply_fields` writes through the raw `Entry`
+    // (not `EntryMut`), so the crate's automatic time-tracking is bypassed —
+    // without this every edit keeps the old timestamp, which makes two diverged
+    // copies look "equal" and breaks the sync merge.
+    entry.times.last_modification = Some(keepass::db::Times::now());
 }
 
 // Parse an expiry string from the frontend. Accepts a full datetime
@@ -798,11 +955,13 @@ fn collect_nodes(
         if let Some(g) = db.group(group_id) {
             let uuid = group_id.to_string();
             let name = g.name.clone();
+            let notes = g.notes.clone().unwrap_or_default();
             let (icon_id, custom_icon_base64) = group_icon(&g);
             let before = entries.len();
             groups.push(GroupData {
                 uuid: uuid.clone(),
                 name: name.clone(),
+                notes,
                 entry_count: 0,
                 icon_id,
                 custom_icon_base64,
@@ -861,6 +1020,7 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
     let root = db.root();
     let root_uuid = root.id().to_string();
     let root_name = root.name.clone();
+    let root_notes = root.notes.clone().unwrap_or_default();
     let (root_icon_id, root_custom_icon) = group_icon(&root);
 
     let recycle_bin_uuid = db
@@ -893,6 +1053,7 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
         GroupData {
             uuid: root_uuid,
             name: root_name,
+            notes: root_notes,
             entry_count: non_recycled,
             icon_id: root_icon_id,
             custom_icon_base64: root_custom_icon,
@@ -1354,10 +1515,12 @@ pub async fn force_sync(
     }
 
     // Both sides may have changed: fold the server copy into our local one.
-    let remote_db = open_db(&app, &remote_bytes, &password)?;
+    let mut remote_db = open_db(&app, &remote_bytes, &password)?;
+    resolve_equal_timestamp_conflicts(&local_db, &mut remote_db);
     local_db
         .merge(&remote_db)
         .map_err(|e| format!("Failed to merge with the remote database: {e}"))?;
+    fixup_merged_entries(&mut local_db, &remote_db);
 
     // Cache + upload the merged union, then return the reconciled view (built from
     // the in-memory database, so we don't decrypt it again).
@@ -1550,6 +1713,15 @@ pub async fn save_group(
     if name.is_empty() {
         return Err("Group name is required".to_string());
     }
+    // Empty notes are stored as `None` (no <Notes> element).
+    let group_notes = {
+        let n = group.notes.trim();
+        if n.is_empty() {
+            None
+        } else {
+            Some(n.to_string())
+        }
+    };
 
     let saved_uuid = if group.uuid.is_empty() {
         // New group under the given parent (or root).
@@ -1565,7 +1737,11 @@ pub async fn save_group(
             .ok_or_else(|| "Parent group not found".to_string())?;
         let mut g = parent.add_group();
         g.name = name;
+        g.notes = group_notes.clone();
         apply_group_icon(&mut g, &group, existing_custom)?;
+        // Writing through the raw `Group` bypasses time-tracking — stamp it so
+        // diverged copies don't look "equal" to the sync merge.
+        g.times.last_modification = Some(keepass::db::Times::now());
         g.id().to_string()
     } else {
         let gu = uuid::Uuid::parse_str(&group.uuid)
@@ -1576,7 +1752,9 @@ pub async fn save_group(
                 .group_mut(gid)
                 .ok_or_else(|| "Group not found".to_string())?;
             g.name = name;
+            g.notes = group_notes.clone();
             apply_group_icon(&mut g, &group, existing_custom)?;
+            g.times.last_modification = Some(keepass::db::Times::now());
         }
         group.uuid.clone()
     };

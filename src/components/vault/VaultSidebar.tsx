@@ -4,6 +4,7 @@ import {
   List,
   Lock,
   Paperclip,
+  Pencil,
   RefreshCw,
   Settings,
   Tag,
@@ -23,7 +24,7 @@ import {
   flashSyncDot,
 } from "@/store";
 import { showToast } from "@/stores/toast";
-import { openDeleteGroupModal } from "@/stores/modals";
+import { openDeleteGroupModal, openEditGroupModal } from "@/stores/modals";
 import type { ActiveView, EntryData, VaultData } from "@/types";
 import { Button } from "@/components/ui/button";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -254,6 +255,9 @@ export default function VaultSidebar() {
                   </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
+                  <ContextMenuItem onSelect={() => openEditGroupModal(g)}>
+                    <Pencil /> Edit
+                  </ContextMenuItem>
                   <ContextMenuItem variant="destructive" onSelect={() => openDeleteGroupModal(g)}>
                     <Trash2 /> Delete
                   </ContextMenuItem>

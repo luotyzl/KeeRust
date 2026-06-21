@@ -16,6 +16,8 @@ interface ModalState {
   createKind: CreateKind;
   // When set, the create-entry dialog opens in edit mode for this entry.
   createEntry: EntryData | null;
+  // When set, the group dialog opens in edit mode for this group.
+  createGroup: GroupData | null;
 }
 
 export const modalStore = createStore<ModalState>({
@@ -29,17 +31,28 @@ export const modalStore = createStore<ModalState>({
   createVisible: false,
   createKind: "entry",
   createEntry: null,
+  createGroup: null,
 });
 
 export const useModals = modalStore.use;
 
 export function openCreateModal(kind: CreateKind): void {
-  modalStore.setState({ createKind: kind, createEntry: null, createVisible: true });
+  modalStore.setState({
+    createKind: kind,
+    createEntry: null,
+    createGroup: null,
+    createVisible: true,
+  });
 }
 
 // Open the entry dialog pre-filled to edit an existing entry.
 export function openEditEntryModal(entry: EntryData): void {
   modalStore.setState({ createKind: "entry", createEntry: entry, createVisible: true });
+}
+
+// Open the group dialog pre-filled to edit an existing group.
+export function openEditGroupModal(group: GroupData): void {
+  modalStore.setState({ createKind: "group", createGroup: group, createVisible: true });
 }
 
 export function closeCreateModal(): void {
