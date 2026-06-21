@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Code2, History, KeyRound, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useApp, getApp, setApp, setView, markSyncPending } from "@/store";
 import { avatarColor } from "@/lib/avatar";
+import { isExpired } from "@/lib/entry";
 import { formatDateTime } from "@/lib/format";
 import { showToast } from "@/stores/toast";
 import { openDeleteModal, openEditEntryModal, openXmlModal } from "@/stores/modals";
@@ -26,12 +27,6 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-// An entry is "expired" only when it has an expiry set and that time is in the past.
-function isExpired(entry: EntryData): boolean {
-  if (!entry.expires || !entry.expiry) return false;
-  const d = new Date(entry.expiry);
-  return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
-}
 
 function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -191,6 +186,7 @@ export default function EntryDetail() {
         <DetailField label="Username" value={entry.username} />
         <DetailField label="Password" value={entry.password} isPassword />
 
+        {entry.expiry && (<DetailField   label="Expiry Date" value={formatDateTime(entry.expiry)} />)}
         {entry.otp_uri && <OtpWidget key={entry.uuid} otpUri={entry.otp_uri} />}
 
         {entry.notes && (
@@ -205,7 +201,7 @@ export default function EntryDetail() {
 
       {urlRows.length > 0 && (
         <>
-          <SectionHeader>URLs</SectionHeader>
+          {(urlRows.length > 1 ? "<SectionHeader>URLs</SectionHeader>" : "")}
           <EntryUrls urls={urlRows} />
         </>
       )}

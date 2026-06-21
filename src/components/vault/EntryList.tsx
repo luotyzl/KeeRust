@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useApp, setApp } from "@/store";
 import { avatarColor } from "@/lib/avatar";
+import { isExpired } from "@/lib/entry";
 import type { EntryData } from "@/types";
 import AvatarInner from "./AvatarInner";
 import { cn } from "@/lib/utils";
@@ -125,6 +126,7 @@ export default function EntryList() {
             entries.map((e) => {
               const bg = e.custom_icon_base64 ? "transparent" : avatarColor(e.title);
               const active = e.uuid === selectedEntryUuid;
+              const expired = isExpired(e);
               return (
                 <tr
                   key={e.uuid}
@@ -142,10 +144,17 @@ export default function EntryList() {
                       >
                         <AvatarInner iconId={e.icon_id} customIconBase64={e.custom_icon_base64} />
                       </div>
-                      <span className="truncate">{e.title || "(no title)"}</span>
+                      <span className={cn("truncate", expired && "line-through")}>
+                        {e.title || "(no title)"}
+                      </span>
                     </div>
                   </td>
-                  <td className="text-muted-foreground truncate border-b px-2 py-1.5 text-xs">
+                  <td
+                    className={cn(
+                      "text-muted-foreground truncate border-b px-2 py-1.5 text-xs",
+                      expired && "line-through"
+                    )}
+                  >
                     {e.username}
                   </td>
                 </tr>

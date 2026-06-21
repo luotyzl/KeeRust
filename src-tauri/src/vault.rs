@@ -759,17 +759,43 @@ fn apply_fields(entry: &mut keepass::db::Entry, update: &EntryUpdate) {
     entry.times.last_modification = Some(keepass::db::Times::now());
 }
 
-// Parse an expiry string from the frontend. Accepts a full datetime
-// ("YYYY-MM-DDTHH:MM[:SS]") and falls back to a bare date (midnight).
+// KDBX stores all times (including ExpiryTime) in UTC, but the date picker works
+// in local wall-clock time. Convert a local time the user entered into the UTC
+// value to store.
+fn local_to_utc(local: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    use chrono::TimeZone;
+    chrono::Local
+        .from_local_datetime(&local)
+        .single()
+        .map(|dt| dt.naive_utc())
+        .unwrap_or(local)
+}
+
+// Convert a UTC time stored in the database back to local wall-clock time for the UI.
+fn utc_to_local(utc: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    use chrono::TimeZone;
+    chrono::Local.from_utc_datetime(&utc).naive_local()
+}
+
+// Format a stored (UTC) expiry as a local "YYYY-MM-DDTHH:MM:SS" string for the UI.
+fn fmt_expiry(t: Option<chrono::NaiveDateTime>) -> String {
+    t.map(|t| utc_to_local(t).format("%Y-%m-%dT%H:%M:%S").to_string())
+        .unwrap_or_default()
+}
+
+// Parse an expiry string from the frontend (local time) into the UTC value to
+// store. Accepts a full datetime ("YYYY-MM-DDTHH:MM[:SS]") and falls back to a
+// bare date (midnight).
 fn parse_expiry(s: &str) -> Option<chrono::NaiveDateTime> {
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+    let local = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
         .ok()
         .or_else(|| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok())
         .or_else(|| {
             chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .ok()
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
-        })
+        })?;
+    Some(local_to_utc(local))
 }
 
 // ── Entry builder ─────────────────────────────────────────────────────────────
@@ -844,11 +870,7 @@ fn entry_to_data(
                         otp_uri: resolve_otp_uri(e),
                         tags: e.tags.clone(),
                         expires: e.times.expires.unwrap_or(false),
-                        expiry: e
-                            .times
-                            .expiry
-                            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
-                            .unwrap_or_default(),
+                        expiry: fmt_expiry(e.times.expiry),
                         icon_id: h_icon_id,
                         custom_icon_base64: h_custom,
                     }
@@ -880,11 +902,7 @@ fn entry_to_data(
         created: fmt_time(entry.times.creation),
         modified: fmt_time(entry.times.last_modification),
         expires: entry.times.expires.unwrap_or(false),
-        expiry: entry
-            .times
-            .expiry
-            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
-            .unwrap_or_default(),
+        expiry: fmt_expiry(entry.times.expiry),
     }
 }
 

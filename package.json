@@ -1,7 +1,7 @@
 {
   "name": "keerust",
   "private": true,
-  "version": "2026.6.20",
+  "version": "2026.6.21",
   "type": "module",
   "packageManager": "yarn@4.10.3",
   "scripts": {
