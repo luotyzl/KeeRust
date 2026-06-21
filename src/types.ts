@@ -69,11 +69,21 @@ export interface GroupData {
   custom_icon_base64: string | null;
 }
 
+export type KdfKind = "argon2d" | "argon2id" | "aes";
+
+export interface KdfSettings {
+  kind: KdfKind;
+  iterations: number; // Argon2 iterations, or AES rounds
+  memory: number; // Argon2 memory in KiB (0 for AES)
+  parallelism: number; // Argon2 parallelism (0 for AES)
+}
+
 export interface VaultData {
   groups: GroupData[];
   entries: EntryData[];
   recycle_bin_uuid: string | null;
   custom_icons: CustomIconData[];
+  kdf: KdfSettings;
 }
 
 export interface SaveResult {
@@ -115,13 +125,22 @@ export interface GroupUpdate {
 
 // get_vault_source returns a tagged union (serde tag = "type").
 export type VaultSource =
-  | { type: "webdav"; url: string; username: string; password: string }
+  | {
+      type: "webdav";
+      url: string;
+      username: string;
+      password: string;
+      accept_invalid_certs: boolean;
+      always_reload: boolean;
+    }
   | { type: "local"; path: string };
 
 export interface WebDavConfig {
   url: string;
   username: string;
   password: string;
+  accept_invalid_certs: boolean;
+  always_reload: boolean;
 }
 
 export type SyncDotState = "" | "syncing" | "ok" | "error";

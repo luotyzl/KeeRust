@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Download } from "lucide-react";
+import { Download, ImagePlus } from "lucide-react";
 import { ICON_COMPONENTS } from "@/lib/icons";
 import { showToast } from "@/stores/toast";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ export default function IconPicker({
   onFavicon: (base64: string) => void;
 }) {
   const [fetching, setFetching] = useState(false);
+  const [picking, setPicking] = useState(false);
 
   async function getFavicon() {
     const u = url.trim();
@@ -44,6 +45,21 @@ export default function IconPicker({
     }
   }
 
+  async function chooseLocalImage() {
+    setPicking(true);
+    try {
+      const b64 = await invoke<string | null>("pick_icon_file");
+      if (b64) {
+        onFavicon(b64);
+        showToast("Image set as icon");
+      }
+    } catch (err) {
+      showToast("Failed to load image: " + String(err));
+    } finally {
+      setPicking(false);
+    }
+  }
+
   return (
     <div className="bg-muted/40 mt-2 space-y-2 rounded-md border p-2">
       <button
@@ -54,6 +70,15 @@ export default function IconPicker({
       >
         <Download className="size-3.5" />
         {fetching ? "Fetching favicon…" : "Download favicon from URL"}
+      </button>
+      <button
+        type="button"
+        disabled={picking}
+        onClick={chooseLocalImage}
+        className="text-primary hover:bg-muted flex w-full items-center justify-center gap-2 rounded-md border border-dashed py-2 text-xs disabled:opacity-60"
+      >
+        <ImagePlus className="size-3.5" />
+        {picking ? "Loading image…" : "Choose local image…"}
       </button>
       <ScrollArea viewportClassName="max-h-64">
         <div className="grid grid-cols-10 gap-1">

@@ -9,14 +9,16 @@ import {
   Moon,
   Palette,
   Pencil,
+  SlidersHorizontal,
   Sun,
   X,
 } from "lucide-react";
 import { setApp, useApp, getApp, sourceLabel, lock, dbName, markSyncPending } from "@/store";
 import { showToast } from "@/stores/toast";
+import { openExternal } from "@/lib/openExternal";
 import { useTheme } from "@/components/theme-provider";
 import { useSettings, setSetting } from "@/stores/settings";
-import type { VaultData } from "@/types";
+import type { KdfKind, VaultData } from "@/types";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -139,6 +141,13 @@ export default function SettingsScreen() {
   const [pwBusy, setPwBusy] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
+  const [kdfOpen, setKdfOpen] = useState(false);
+  const [kdfKind, setKdfKind] = useState<KdfKind>("argon2d");
+  const [kdfIterations, setKdfIterations] = useState("2");
+  const [kdfMemory, setKdfMemory] = useState("65536");
+  const [kdfParallelism, setKdfParallelism] = useState("2");
+  const [kdfError, setKdfError] = useState("");
+  const [kdfBusy, setKdfBusy] = useState(false);
 
   useEffect(() => {
     if (hasVault) {
@@ -216,6 +225,60 @@ export default function SettingsScreen() {
       showToast("Failed: " + String(err));
     } finally {
       setGenBusy(false);
+    }
+  }
+
+  function openKdf() {
+    const kdf = getApp().vaultData?.kdf;
+    if (kdf) {
+      setKdfKind(kdf.kind);
+      setKdfIterations(String(kdf.iterations));
+      // Argon2 stores memory in KiB; AES has none — show a sensible default.
+      setKdfMemory(String(kdf.memory || 65536));
+      setKdfParallelism(String(kdf.parallelism || 2));
+    }
+    setKdfError("");
+    setKdfOpen(true);
+  }
+
+  async function submitKdf() {
+    if (kdfBusy) return;
+    const iterations = Number(kdfIterations);
+    const memory = Number(kdfMemory);
+    const parallelism = Number(kdfParallelism);
+    if (!Number.isInteger(iterations) || iterations < 1) {
+      return setKdfError(
+        kdfKind === "aes"
+          ? "Rounds must be a whole number of at least 1."
+          : "Iterations must be a whole number of at least 1.",
+      );
+    }
+    if (kdfKind !== "aes") {
+      if (!Number.isInteger(parallelism) || parallelism < 1) {
+        return setKdfError("Parallelism must be a whole number of at least 1.");
+      }
+      if (!Number.isInteger(memory) || memory < 8 * parallelism) {
+        return setKdfError("Memory is too low for the chosen parallelism.");
+      }
+    }
+    setKdfError("");
+    setKdfBusy(true);
+    try {
+      const vault = await invoke<VaultData>("set_kdf_settings", {
+        password: getApp().masterPassword,
+        kind: kdfKind,
+        iterations,
+        memory: kdfKind === "aes" ? 0 : memory,
+        parallelism: kdfKind === "aes" ? 0 : parallelism,
+      });
+      setApp({ vaultData: vault });
+      markSyncPending();
+      setKdfOpen(false);
+      showToast("Key derivation settings updated");
+    } catch (err) {
+      setKdfError(String(err));
+    } finally {
+      setKdfBusy(false);
     }
   }
 
@@ -435,6 +498,9 @@ export default function SettingsScreen() {
                   <Button variant="outline" size="sm" onClick={openChangePassword}>
                     <Lock /> Change master password
                   </Button>
+                  <Button variant="outline" size="sm" onClick={openKdf}>
+                    <SlidersHorizontal /> Key derivation
+                  </Button>
                   {!keyFile && (
                     <Button
                       variant="outline"
@@ -459,7 +525,20 @@ export default function SettingsScreen() {
             <CardTitle>About</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Row label="App" value="KeeRust" />
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="text-muted-foreground">App</span>
+              <a
+                href="https://github.com/luotyzl/KeeRust"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternal("https://github.com/luotyzl/KeeRust");
+                }}
+                className="text-primary cursor-pointer truncate text-right hover:underline"
+                title="https://github.com/luotyzl/KeeRust"
+              >
+                KeeRust
+              </a>
+            </div>
             <Row label="Version" value={__APP_VERSION__} />
           </CardContent>
         </Card>
@@ -482,6 +561,80 @@ export default function SettingsScreen() {
             </Button>
             <Button variant="destructive" onClick={confirmSwitchDatabase}>
               Lock &amp; Switch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Key derivation (KDF) settings */}
+      <Dialog open={kdfOpen} onOpenChange={(o) => !kdfBusy && setKdfOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Key Derivation</DialogTitle>
+            <DialogDescription>
+              These settings control how slow it is to derive the master key —
+              higher values resist password guessing but make unlocking and saving
+              slower. The database is re-encrypted when you apply them.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="kdf-kind">Function</Label>
+              <Select value={kdfKind} onValueChange={(v) => setKdfKind(v as KdfKind)}>
+                <SelectTrigger id="kdf-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="argon2d">Argon2d (recommended)</SelectItem>
+                  <SelectItem value="argon2id">Argon2id</SelectItem>
+                  <SelectItem value="aes">AES-KDF (legacy)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="kdf-iterations">
+                {kdfKind === "aes" ? "Rounds" : "Iterations"}
+              </Label>
+              <Input
+                id="kdf-iterations"
+                type="number"
+                min={1}
+                value={kdfIterations}
+                onChange={(e) => setKdfIterations(e.target.value)}
+              />
+            </div>
+            {kdfKind !== "aes" && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="kdf-memory">Memory (KB)</Label>
+                  <Input
+                    id="kdf-memory"
+                    type="number"
+                    min={8}
+                    value={kdfMemory}
+                    onChange={(e) => setKdfMemory(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="kdf-parallelism">Parallelism</Label>
+                  <Input
+                    id="kdf-parallelism"
+                    type="number"
+                    min={1}
+                    value={kdfParallelism}
+                    onChange={(e) => setKdfParallelism(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+            {kdfError && <p className="text-destructive text-sm">{kdfError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={kdfBusy} onClick={() => setKdfOpen(false)}>
+              Cancel
+            </Button>
+            <Button disabled={kdfBusy} onClick={submitKdf}>
+              {kdfBusy ? "Applying…" : "Apply"}
             </Button>
           </DialogFooter>
         </DialogContent>

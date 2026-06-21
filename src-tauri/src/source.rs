@@ -20,6 +20,14 @@ impl VaultSource {
         matches!(self, VaultSource::Local { .. })
     }
 
+    /// The WebDAV config, if this source is a WebDAV vault.
+    pub fn webdav_config(&self) -> Option<&WebDavConfig> {
+        match self {
+            VaultSource::WebDav(c) => Some(c),
+            VaultSource::Local { .. } => None,
+        }
+    }
+
     /// Read the current database bytes from the origin (WebDAV GET or local file).
     pub async fn fetch(&self) -> Result<Vec<u8>, String> {
         match self {
@@ -33,7 +41,7 @@ impl VaultSource {
     /// Write database bytes back to the origin (WebDAV PUT or local file).
     pub async fn put(&self, bytes: Vec<u8>) -> Result<(), String> {
         match self {
-            VaultSource::WebDav(c) => put_db_bytes(c, bytes).await,
+            VaultSource::WebDav(c) => put_db_bytes(c, bytes).await.map(|_| ()),
             VaultSource::Local { path } => {
                 std::fs::write(path, bytes).map_err(|e| format!("Failed to write file: {e}"))
             }
@@ -131,6 +139,8 @@ pub fn save_webdav_config(app: tauri::AppHandle, config: WebDavConfig) -> Result
     // A different database resets the key-file association; the unlock screen
     // lets the user attach one if the new database needs it.
     save_keyfile_path(&app, None)?;
+    // Drop the cache from the previous database so we don't serve stale bytes.
+    crate::vault::clear_db_cache(&app);
     save_source(&app, &VaultSource::WebDav(config))
 }
 
@@ -156,6 +166,8 @@ pub async fn open_local_file(app: tauri::AppHandle) -> Result<Option<VaultSource
     };
     // A different database resets the key-file association.
     save_keyfile_path(&app, None)?;
+    // Drop the cache from the previous database so we don't serve stale bytes.
+    crate::vault::clear_db_cache(&app);
     save_source(&app, &source)?;
     Ok(Some(source))
 }

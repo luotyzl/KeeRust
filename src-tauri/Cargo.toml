@@ -36,3 +36,16 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_System_RemoteDesktop",
 ] }
+
+# Opening/saving a KDBX runs Argon2 — a deliberately memory-hard KDF that is
+# 10-50x slower when compiled unoptimized. `tauri dev` uses the dev profile, so
+# without this the crypto crates run at opt-level 0 and unlocking takes seconds.
+# Optimize all dependencies (argon2, aes, sha2, …) while keeping our own crate
+# at opt-level 0 for fast, debuggable incremental builds.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Squeeze a bit more crypto throughput out of release builds.
+[profile.release]
+lto = "thin"
+codegen-units = 1

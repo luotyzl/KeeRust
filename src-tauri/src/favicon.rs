@@ -2,6 +2,7 @@ use base64::prelude::*;
 use image::imageops::FilterType;
 use std::io::Cursor;
 use std::time::Duration;
+use tauri_plugin_dialog::DialogExt;
 
 /// Fetch the favicon for the website at `url`, normalise it to a 32×32 PNG, and
 /// return it base64-encoded. Mirrors KeeWeb's "download favicon" feature.
@@ -21,6 +22,35 @@ pub async fn fetch_favicon(url: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to encode PNG: {e}"))?;
 
     Ok(BASE64_STANDARD.encode(&png))
+}
+
+/// Let the user pick a local image file and normalise it to a 32×32 PNG (base64),
+/// for use as a custom entry icon. Returns `None` if the dialog is cancelled.
+#[tauri::command]
+pub async fn pick_icon_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "ico"])
+        .blocking_pick_file();
+    let Some(file) = picked else {
+        return Ok(None); // user cancelled
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("Invalid file path: {e}"))?;
+    let raw = std::fs::read(&path).map_err(|e| format!("Failed to read image: {e}"))?;
+
+    // Decode (PNG / JPEG / GIF / WebP / ICO), resize to 32×32, re-encode as PNG.
+    let img = image::load_from_memory(&raw)
+        .map_err(|e| format!("Not a supported image: {e}"))?;
+    let resized = img.resize(32, 32, FilterType::Lanczos3);
+    let mut png: Vec<u8> = Vec::new();
+    resized
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode PNG: {e}"))?;
+
+    Ok(Some(BASE64_STANDARD.encode(&png)))
 }
 
 /// Reduce a user-entered URL to its scheme + host (+ port), e.g.

@@ -86,12 +86,21 @@ pub struct CustomIconData {
     pub base64: String, // raw PNG data
 }
 
+#[derive(Serialize, Clone)]
+pub struct KdfSettings {
+    pub kind: String,     // "argon2d" | "argon2id" | "aes"
+    pub iterations: u64,  // Argon2 iterations, or AES rounds
+    pub memory: u64,      // Argon2 memory in KiB (0 for AES)
+    pub parallelism: u32, // Argon2 parallelism (0 for AES)
+}
+
 #[derive(Serialize)]
 pub struct VaultData {
     pub groups: Vec<GroupData>,
     pub entries: Vec<EntryData>,
     pub recycle_bin_uuid: Option<String>,
     pub custom_icons: Vec<CustomIconData>, // all custom icons in the DB (pickable)
+    pub kdf: KdfSettings,                   // key-derivation settings (for the Advanced dialog)
 }
 
 #[derive(Serialize)]
@@ -152,6 +161,50 @@ fn cache_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .app_data_dir()
         .expect("failed to resolve app data dir")
         .join("db_cache.kdbx")
+}
+
+/// Sidecar file holding the server's `Last-Modified` revision for the bytes
+/// currently in the cache — used to detect remote changes without downloading
+/// the whole file (unless the source opts out via `always_reload`).
+fn cache_rev_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_data_dir()
+        .expect("failed to resolve app data dir")
+        .join("db_cache.rev")
+}
+
+fn load_cache_rev(app: &tauri::AppHandle) -> Option<String> {
+    let rev = std::fs::read_to_string(cache_rev_path(app)).ok()?;
+    let rev = rev.trim().to_string();
+    if rev.is_empty() {
+        None
+    } else {
+        Some(rev)
+    }
+}
+
+/// Record (or, with `None`, forget) the revision matching the cached bytes.
+fn save_cache_rev(app: &tauri::AppHandle, rev: Option<&str>) {
+    let path = cache_rev_path(app);
+    match rev {
+        Some(r) if !r.is_empty() => {
+            if let Some(p) = path.parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
+            let _ = std::fs::write(path, r);
+        }
+        _ => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Delete the local WebDAV cache (and its revision marker). Called whenever the
+/// active database changes so a stale cache from the previous database is never
+/// served (it belongs to a different file and won't even open under the new key).
+pub fn clear_db_cache(app: &tauri::AppHandle) {
+    let _ = std::fs::remove_file(cache_path(app));
+    let _ = std::fs::remove_file(cache_rev_path(app));
 }
 
 // ── Open / persist helpers ──────────────────────────────────────────────────────
@@ -217,13 +270,15 @@ fn write_cache(app: &tauri::AppHandle, bytes: &[u8]) {
     let _ = std::fs::write(&cache, bytes);
 }
 
-/// Upload to WebDAV in the background, reporting the outcome via `sync-status`.
-fn spawn_upload(app: &tauri::AppHandle, source: &VaultSource, bytes: Vec<u8>) {
+/// Upload to WebDAV in the background, recording the new revision the server
+/// reports and announcing the outcome via `sync-status`.
+fn spawn_upload(app: &tauri::AppHandle, config: crate::webdav::WebDavConfig, bytes: Vec<u8>) {
     let app2 = app.clone();
-    let source2 = source.clone();
     tauri::async_runtime::spawn(async move {
-        match source2.put(bytes).await {
-            Ok(_) => {
+        match crate::webdav::put_db_bytes(&config, bytes).await {
+            Ok(rev) => {
+                // The cached bytes now match what's on the server at this revision.
+                save_cache_rev(&app2, rev.as_deref());
                 app2.emit("sync-status", serde_json::json!({"ok": true})).ok();
             }
             Err(e) => {
@@ -232,6 +287,35 @@ fn spawn_upload(app: &tauri::AppHandle, source: &VaultSource, bytes: Vec<u8>) {
             }
         }
     });
+}
+
+/// For a WebDAV source, decide whether the server differs from our cached copy
+/// and, if so, return the current server bytes (to merge against). When the
+/// source trusts `Last-Modified`, a cheap HEAD avoids downloading an unchanged
+/// file; otherwise (or when the header is missing/changed) the file is fetched
+/// and compared by content. Refreshes the recorded revision when it downloads.
+async fn webdav_remote_bytes_if_changed(
+    app: &tauri::AppHandle,
+    config: &crate::webdav::WebDavConfig,
+    base_bytes: &[u8],
+) -> Result<Option<Vec<u8>>, String> {
+    // Fast path: trust the server's Last-Modified header.
+    if !config.always_reload {
+        if let Some(cache_rev) = load_cache_rev(app) {
+            if crate::webdav::last_modified(config).await?.as_deref() == Some(cache_rev.as_str()) {
+                return Ok(None); // server unchanged since we cached
+            }
+        }
+    }
+
+    // Full reload: download and compare by content.
+    let (bytes, rev) = crate::webdav::fetch_with_rev(config).await?;
+    if bytes == base_bytes {
+        save_cache_rev(app, rev.as_deref());
+        Ok(None)
+    } else {
+        Ok(Some(bytes))
+    }
 }
 
 /// Serialize a mutated database and persist it back to the source — the single
@@ -246,8 +330,9 @@ fn spawn_upload(app: &tauri::AppHandle, source: &VaultSource, bytes: Vec<u8>) {
 ///   result is cached immediately and uploaded (HTTP PUT) in the background.
 ///
 /// `remote_password` opens the *current server* copy (the pre-change key, for the
-/// key-management commands); `save_key` encrypts the result. Returns the bytes
-/// actually written, so the caller can rebuild the (possibly merged) vault data.
+/// key-management commands); `save_key` encrypts the result. Returns the persisted
+/// (possibly merged) database itself, so the caller can build vault data from it
+/// without a redundant decrypt — every key-derivation here runs the Argon2 KDF.
 async fn reconcile_and_persist(
     app: &tauri::AppHandle,
     source: &VaultSource,
@@ -255,27 +340,31 @@ async fn reconcile_and_persist(
     mut db: keepass::Database,
     remote_password: &str,
     save_key: keepass::DatabaseKey,
-) -> Result<Vec<u8>, String> {
+) -> Result<keepass::Database, String> {
     // Local files: straight, synchronous write.
     if source.is_local() {
         let mut out = Vec::new();
         db.save(&mut out, save_key)
             .map_err(|e| format!("Failed to save: {e}"))?;
-        source.put(out.clone()).await?;
-        return Ok(out);
+        source.put(out).await?;
+        return Ok(db);
     }
 
-    // WebDAV: fetch the current server copy to reconcile against.
-    match source.fetch().await {
+    // WebDAV: reconcile with the current server copy before pushing.
+    let config = source
+        .webdav_config()
+        .expect("non-local source must be WebDAV")
+        .clone();
+    match webdav_remote_bytes_if_changed(app, &config, base_bytes).await {
         // Server changed since we cached → merge our edits into it (lossless).
-        Ok(remote_bytes) if remote_bytes != base_bytes => {
+        Ok(Some(remote_bytes)) => {
             let remote_db = open_db(app, &remote_bytes, remote_password)
                 .map_err(|e| format!("Failed to open the remote database to merge: {e}"))?;
             db.merge(&remote_db)
                 .map_err(|e| format!("Failed to merge with the remote database: {e}"))?;
         }
         // Server unchanged → safe to push our version as-is.
-        Ok(_) => {}
+        Ok(None) => {}
         // Offline / server error → keep the change in the local cache and let the
         // next successful sync push it; surface the failure via sync-status.
         Err(e) => {
@@ -283,19 +372,22 @@ async fn reconcile_and_persist(
             db.save(&mut out, save_key)
                 .map_err(|e| format!("Failed to save: {e}"))?;
             write_cache(app, &out);
+            save_cache_rev(app, None); // cache no longer matches a known server revision
             app.emit("sync-status", serde_json::json!({"ok": false, "error": e}))
                 .ok();
-            return Ok(out);
+            return Ok(db);
         }
     }
 
-    // Serialize the (possibly merged) database, cache it, and upload.
+    // Serialize the (possibly merged) database, cache it, and upload. The new
+    // revision is recorded once the background upload reports it.
     let mut out = Vec::new();
     db.save(&mut out, save_key)
         .map_err(|e| format!("Failed to save: {e}"))?;
     write_cache(app, &out);
-    spawn_upload(app, source, out.clone());
-    Ok(out)
+    save_cache_rev(app, None);
+    spawn_upload(app, config, out);
+    Ok(db)
 }
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
@@ -722,7 +814,50 @@ fn collect_nodes(
     }
 }
 
+/// Map the database's KDF config to the outbound settings shape.
+fn read_kdf_settings(cfg: &keepass::config::KdfConfig) -> KdfSettings {
+    use keepass::config::KdfConfig;
+    match cfg {
+        KdfConfig::Aes { rounds } => KdfSettings {
+            kind: "aes".to_string(),
+            iterations: *rounds,
+            memory: 0,
+            parallelism: 0,
+        },
+        KdfConfig::Argon2 {
+            iterations,
+            memory,
+            parallelism,
+            ..
+        } => KdfSettings {
+            kind: "argon2d".to_string(),
+            iterations: *iterations,
+            memory: *memory,
+            parallelism: *parallelism,
+        },
+        KdfConfig::Argon2id {
+            iterations,
+            memory,
+            parallelism,
+            ..
+        } => KdfSettings {
+            kind: "argon2id".to_string(),
+            iterations: *iterations,
+            memory: *memory,
+            parallelism: *parallelism,
+        },
+        // `KdfConfig` is #[non_exhaustive]; report unknown variants as argon2d.
+        _ => KdfSettings {
+            kind: "argon2d".to_string(),
+            iterations: 0,
+            memory: 0,
+            parallelism: 0,
+        },
+    }
+}
+
 fn build_vault_data(db: keepass::Database) -> VaultData {
+    let kdf = read_kdf_settings(&db.config.kdf_config);
     let root = db.root();
     let root_uuid = root.id().to_string();
     let root_name = root.name.clone();
@@ -769,6 +904,7 @@ fn build_vault_data(db: keepass::Database) -> VaultData {
         entries,
         recycle_bin_uuid,
         custom_icons,
+        kdf,
     }
 }
 
@@ -789,6 +925,10 @@ pub async fn open_database(
     }
 
     // WebDAV: cache-first — serve from disk immediately, check remote in background.
+    let config = source
+        .webdav_config()
+        .expect("non-local source must be WebDAV")
+        .clone();
     let cache = cache_path(&app);
     let mut used_cache = false;
 
@@ -799,38 +939,47 @@ pub async fn open_database(
                 b
             }
             Err(_) => {
-                // Cache unreadable — fall back to WebDAV
-                let b = source.fetch().await?;
-                if let Some(p) = cache.parent() {
-                    let _ = std::fs::create_dir_all(p);
-                }
-                let _ = std::fs::write(&cache, &b);
+                // Cache unreadable — fall back to WebDAV.
+                let (b, rev) = crate::webdav::fetch_with_rev(&config).await?;
+                write_cache(&app, &b);
+                save_cache_rev(&app, rev.as_deref());
                 b
             }
         }
     } else {
-        // First open: fetch from WebDAV and store locally
-        let b = source.fetch().await?;
-        if let Some(p) = cache.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        let _ = std::fs::write(&cache, &b);
+        // First open: fetch from WebDAV and store locally.
+        let (b, rev) = crate::webdav::fetch_with_rev(&config).await?;
+        write_cache(&app, &b);
+        save_cache_rev(&app, rev.as_deref());
         b
     };
 
     let db = open_db(&app, &bytes, &password)?;
 
-    // Background: check if remote has a newer version than what we just served
+    // Background: check whether the server has a newer version than the cache we
+    // just served; if so, refresh the cache and notify the UI. Uses a cheap HEAD
+    // when the source trusts Last-Modified, otherwise downloads to compare.
     if used_cache {
         let app2 = app.clone();
-        let source2 = source.clone();
-        let cache2 = cache.clone();
+        let config2 = config.clone();
+        let cache_bytes = bytes.clone();
         tauri::async_runtime::spawn(async move {
-            if let Ok(remote_bytes) = source2.fetch().await {
-                let cached = std::fs::read(&cache2).unwrap_or_default();
-                if remote_bytes != cached {
-                    let _ = std::fs::write(&cache2, &remote_bytes);
+            if !config2.always_reload {
+                if let (Ok(remote_rev), Some(cache_rev)) =
+                    (crate::webdav::last_modified(&config2).await, load_cache_rev(&app2))
+                {
+                    if remote_rev.as_deref() == Some(cache_rev.as_str()) {
+                        return; // unchanged — nothing to download
+                    }
+                }
+            }
+            if let Ok((remote_bytes, rev)) = crate::webdav::fetch_with_rev(&config2).await {
+                if remote_bytes != cache_bytes {
+                    write_cache(&app2, &remote_bytes);
+                    save_cache_rev(&app2, rev.as_deref());
                     app2.emit("db-remote-updated", ()).ok();
+                } else {
+                    save_cache_rev(&app2, rev.as_deref());
                 }
             }
         });
@@ -895,9 +1044,8 @@ where
     mutate(&mut db)?;
 
     let save_key = db_key(&app, &password)?;
-    let final_bytes = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
+    let db2 = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
 
-    let db2 = open_db(&app, &final_bytes, &password)?;
     Ok(build_vault_data(db2))
 }
 
@@ -1161,14 +1309,20 @@ pub async fn force_sync(
         return Ok(build_vault_data(db));
     }
 
-    // WebDAV: our local cache (with any unpushed edits) vs. the current server copy.
+    // WebDAV: our local cache (with any unpushed edits) vs. the current server
+    // copy. A manual Sync always downloads (it's an explicit, forced refresh).
+    let config = source
+        .webdav_config()
+        .expect("non-local source must be WebDAV")
+        .clone();
     let cache_bytes = read_working_bytes(&app, &source).await?;
-    let remote_bytes = source.fetch().await?;
+    let (remote_bytes, remote_rev) = crate::webdav::fetch_with_rev(&config).await?;
 
     let mut local_db = open_db(&app, &cache_bytes, &password)?;
 
     if remote_bytes == cache_bytes {
-        // Already in sync — nothing to merge or push.
+        // Already in sync — record the revision and refresh the view.
+        save_cache_rev(&app, remote_rev.as_deref());
         return Ok(build_vault_data(local_db));
     }
 
@@ -1178,16 +1332,17 @@ pub async fn force_sync(
         .merge(&remote_db)
         .map_err(|e| format!("Failed to merge with the remote database: {e}"))?;
 
-    // Cache + upload the merged union, then return the reconciled view.
+    // Cache + upload the merged union, then return the reconciled view (built from
+    // the in-memory database, so we don't decrypt it again).
     let mut merged_bytes = Vec::new();
     local_db
         .save(&mut merged_bytes, db_key(&app, &password)?)
         .map_err(|e| format!("Failed to save: {e}"))?;
     write_cache(&app, &merged_bytes);
-    spawn_upload(&app, &source, merged_bytes.clone());
+    save_cache_rev(&app, None);
+    spawn_upload(&app, config, merged_bytes);
 
-    let db2 = open_db(&app, &merged_bytes, &password)?;
-    Ok(build_vault_data(db2))
+    Ok(build_vault_data(local_db))
 }
 
 // ── Raw entry XML ─────────────────────────────────────────────────────────────
@@ -1328,12 +1483,11 @@ pub async fn save_entry(
     };
 
     // Persist: local writes synchronously; WebDAV reconciles with the server
-    // (merging concurrent edits) then caches + PUTs in the background.
+    // (merging concurrent edits) then caches + PUTs in the background. The
+    // persisted (possibly merged) database is returned so we can build the
+    // response without re-decrypting.
     let save_key = db_key(&app, &password)?;
-    let final_bytes = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
-
-    // Re-parse from the persisted (possibly merged) bytes to build the response.
-    let db2 = open_db(&app, &final_bytes, &password)?;
+    let db2 = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
 
     let result = SaveResult {
         vault: build_vault_data(db2),
@@ -1401,9 +1555,8 @@ pub async fn save_group(
     };
 
     let save_key = db_key(&app, &password)?;
-    let final_bytes = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
+    let db2 = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
 
-    let db2 = open_db(&app, &final_bytes, &password)?;
     let result = SaveResult {
         vault: build_vault_data(db2),
         saved_uuid,
@@ -1446,6 +1599,21 @@ pub async fn create_database(
 
     // A fresh database defaults to KDBX4 (the only version we can save).
     let mut db = keepass::Database::new();
+    // The crate's default KDF is very heavy (Argon2 ~1 GiB / 50 iterations),
+    // which makes every open/save slow. Tune it down to KeePass's standard
+    // Argon2d settings (64 MiB / 2 iterations / 2 lanes); the user can change
+    // this later via Settings → Key Derivation.
+    if let keepass::config::KdfConfig::Argon2 {
+        iterations,
+        memory,
+        parallelism,
+        ..
+    } = &mut db.config.kdf_config
+    {
+        *iterations = 2;
+        *memory = 65536;
+        *parallelism = 2;
+    }
     {
         let mut root = db.root_mut();
         root.name = name.clone();
@@ -1462,12 +1630,14 @@ pub async fn create_database(
     .map_err(|e| format!("Failed to create database: {e}"))?;
     std::fs::write(&path, &bytes).map_err(|e| format!("Failed to write file: {e}"))?;
 
-    // Switch the active source to the new file and clear any prior key file.
+    // Switch the active source to the new file and clear any prior key file +
+    // the previous database's cache.
     let source = VaultSource::Local {
         path: path.to_string_lossy().to_string(),
     };
     save_source(&app, &source)?;
     save_keyfile_path(&app, None)?;
+    clear_db_cache(&app);
 
     let db2 = open_db(&app, &bytes, &password)?;
     Ok(Some(build_vault_data(db2)))
@@ -1517,6 +1687,77 @@ pub async fn change_master_password(
     let save_key = db_key(&app, &new_password)?;
     reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
     Ok(())
+}
+
+/// Change the key-derivation function settings and re-encrypt the database with
+/// them. `kind` is "argon2d" | "argon2id" | "aes"; `iterations` doubles as the
+/// AES round count; `memory` (KiB) and `parallelism` apply to Argon2 only.
+#[tauri::command]
+pub async fn set_kdf_settings(
+    app: tauri::AppHandle,
+    password: String,
+    kind: String,
+    iterations: u64,
+    memory: u64,
+    parallelism: u32,
+) -> Result<VaultData, String> {
+    use keepass::config::{DatabaseConfig, KdfConfig};
+
+    let kind = kind.to_lowercase();
+    match kind.as_str() {
+        "aes" => {
+            if iterations < 1 {
+                return Err("AES rounds must be at least 1.".to_string());
+            }
+        }
+        "argon2d" | "argon2id" => {
+            if iterations < 1 {
+                return Err("Iterations must be at least 1.".to_string());
+            }
+            if parallelism < 1 {
+                return Err("Parallelism must be at least 1.".to_string());
+            }
+            // Argon2 requires at least 8 KiB of memory per lane.
+            if memory < 8 * parallelism as u64 {
+                return Err("Memory is too low for the chosen parallelism.".to_string());
+            }
+        }
+        _ => return Err("Unknown key derivation function.".to_string()),
+    }
+
+    mutate_and_persist(app, password, move |db| {
+        let new_cfg = if kind == "aes" {
+            KdfConfig::Aes { rounds: iterations }
+        } else {
+            // Reuse the current Argon2 version, or fall back to the crate default
+            // (so a switch from AES still gets a valid version).
+            let version = match &db.config.kdf_config {
+                KdfConfig::Argon2 { version, .. } | KdfConfig::Argon2id { version, .. } => *version,
+                _ => match DatabaseConfig::default().kdf_config {
+                    KdfConfig::Argon2 { version, .. } => version,
+                    _ => unreachable!("the crate default KDF is Argon2"),
+                },
+            };
+            if kind == "argon2id" {
+                KdfConfig::Argon2id {
+                    iterations,
+                    memory,
+                    parallelism,
+                    version,
+                }
+            } else {
+                KdfConfig::Argon2 {
+                    iterations,
+                    memory,
+                    parallelism,
+                    version,
+                }
+            }
+        };
+        db.config.kdf_config = new_cfg;
+        Ok(())
+    })
+    .await
 }
 
 /// Generate a new 32-byte binary key file, save it to a chosen location, and add

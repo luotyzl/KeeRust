@@ -1,5 +1,6 @@
 import { Copy } from "lucide-react";
 import { copyText } from "@/stores/toast";
+import { openExternal } from "@/lib/openExternal";
 import { Button } from "@/components/ui/button";
 
 export interface UrlRow {
@@ -23,9 +24,11 @@ export default function EntryUrls({ urls }: { urls: UrlRow[] }) {
             <div className="text-muted-foreground text-xs break-words">{u.label}</div>
             <a
               href={urlHref(u.value)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary block text-sm break-words hover:underline"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternal(urlHref(u.value));
+              }}
+              className="text-primary block cursor-pointer text-sm break-words hover:underline"
             >
               {u.value}
             </a>

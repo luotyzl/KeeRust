@@ -1,6 +1,7 @@
 mod attachments;
 mod autotype;
 mod favicon;
+mod shell;
 mod source;
 #[cfg(windows)]
 mod syslock;
@@ -158,6 +159,7 @@ pub fn run() {
             vault::create_database,
             vault::rename_database,
             vault::change_master_password,
+            vault::set_kdf_settings,
             vault::generate_key_file,
             vault::remove_key_file,
             vault::force_sync,
@@ -173,10 +175,12 @@ pub fn run() {
             vault::save_group,
             vault::get_entry_xml,
             favicon::fetch_favicon,
+            favicon::pick_icon_file,
             autotype::autotype_run,
             autotype::autotype_text,
             autotype::autotype_sequence,
             autotype::focus_main_window,
+            shell::open_external,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

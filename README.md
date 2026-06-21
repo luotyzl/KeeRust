@@ -2,26 +2,6 @@
 
 A fast, native desktop password manager for KeePass databases — a ground-up rewrite of the Electron-based [KeeWeb](https://github.com/keeweb/keeweb) on a [Tauri 2](https://tauri.app/) (Rust) + React stack. The Rust backend owns all cryptography and file I/O; the React frontend is a thin, sandboxed UI that never sees raw key material on disk.
 
-> **Status:** active development. Databases are read as KDBX 2/3/4 but **saved only as KDBX 4** (see [Limitations](#limitations)).
-
----
-
-## Features
-
-- **Open local `.kdbx` files** or sync over **WebDAV** (cache-first reads, background writes).
-- **Create new databases** and **rename** them in-app.
-- **Master password** unlock, plus optional **key files** — generate a new one after unlocking, attach an existing one to unlock, or remove it.
-- **Change the master password** of an open database.
-- **Entries**: create, edit, and organize into groups; custom fields, notes, and URLs.
-- **TOTP / one-time codes** with a live countdown widget.
-- **File attachments** — add, view, and remove (drag-and-drop supported).
-- **Entry history** — browse, restore, and prune previous versions.
-- **Recycle Bin** — soft-delete entries/groups with restore, or delete permanently.
-- **Password generator** with configurable character sets and length.
-- **Favicon fetching** for entry icons, plus a built-in icon picker.
-- **Global auto-type** (default hotkey `Alt+Shift+T`): matches the foreground window by title/URL and types `username {TAB} password {ENTER}`, or a custom per-entry keystroke sequence. Reads the active browser's address bar via UI Automation for URL matching. Ignores the hotkey when KeeRust itself is the active window.
-- **Security & convenience**: auto-lock on inactivity / minimize / OS lock or sleep, lock-to-tray, "minimize instead of close", light/dark themes, and navigation/zoom-hotkey lockdown.
-
 ---
 
 ## Tech Stack
@@ -133,14 +113,9 @@ Other scripts: `yarn dev` (Vite only), `yarn typecheck`, `yarn preview`.
 
 ---
 
-## Versioning
-
-The app uses a **date-based version** (`YYYY.M.D`) defined in `package.json`. The frontend reads it at build time via Vite's `define` (`__APP_VERSION__`) and shows it on the Settings → About page.
-
----
-
 ## Acknowledgements
 
 - [KeeWeb](https://github.com/keeweb/keeweb) — the original web/Electron app this project reimagines natively.
+- [Strongbox](https://strongboxsafe.com/) — UI/UX design inspiration.
 - [keepass-rs](https://github.com/sseemayer/keepass-rs) — Rust KDBX implementation.
 - [Tauri](https://tauri.app/) and [shadcn/ui](https://ui.shadcn.com/).

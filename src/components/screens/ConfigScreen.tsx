@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -23,6 +24,8 @@ export default function ConfigScreen() {
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [acceptInvalidCerts, setAcceptInvalidCerts] = useState(false);
+  const [alwaysReload, setAlwaysReload] = useState(true);
   const localBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -50,7 +53,13 @@ export default function ConfigScreen() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const config: WebDavConfig = { url: url.trim(), username: username.trim(), password };
+    const config: WebDavConfig = {
+      url: url.trim(),
+      username: username.trim(),
+      password,
+      accept_invalid_certs: acceptInvalidCerts,
+      always_reload: alwaysReload,
+    };
     if (!config.url || !config.username || !config.password) {
       setError("All fields are required.");
       return;
@@ -131,6 +140,35 @@ export default function ConfigScreen() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={acceptInvalidCerts}
+                onCheckedChange={(v) => setAcceptInvalidCerts(v === true)}
+                className="mt-0.5"
+              />
+              <span>
+                Trust unsafe certificate
+                <span className="text-muted-foreground block text-xs">
+                  Accept self-signed or invalid TLS certificates. Only enable for a
+                  server you control.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={alwaysReload}
+                onCheckedChange={(v) => setAlwaysReload(v === true)}
+                className="mt-0.5"
+              />
+              <span>
+                Always reload the file
+                <span className="text-muted-foreground block text-xs">
+                  Detect changes by re-downloading the file instead of trusting the
+                  server's Last-Modified header. Turn off to reduce requests if your
+                  server reports it reliably.
+                </span>
+              </span>
+            </label>
             {error && <p className="text-destructive text-sm">{error}</p>}
             <Button type="submit" className="w-full" disabled={saving}>
               {saving ? "Saving…" : "Save & Continue"}

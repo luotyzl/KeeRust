@@ -9,6 +9,7 @@ import {
   Settings,
   Tag,
   Trash2,
+  ClockFading,
   type LucideIcon,
 } from "lucide-react";
 import { iconComponent } from "@/lib/icons";
@@ -209,7 +210,7 @@ export default function VaultSidebar() {
               active={sameView(activeView, { kind: "all" })}
             />
             <MenuItem
-              icon={lucide(KeyRound)}
+              icon={lucide(ClockFading)}
               label="2FA codes"
               count={otpCount}
               view={{ kind: "otp" }}

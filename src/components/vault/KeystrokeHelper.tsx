@@ -1,4 +1,5 @@
 import type { MouseEvent } from "react";
+import { openExternal } from "@/lib/openExternal";
 
 const FIELD_TOKENS = [
   "{TITLE}", "{USERNAME}", "{URL}", "{PASSWORD}", "{NOTES}", "{GROUP}",
@@ -51,10 +52,12 @@ export default function KeystrokeHelper({
         <div className="text-muted-foreground mb-1.5 flex items-baseline justify-between text-xs">
           <span>Entry fields:</span>
           <a
-            className="text-primary hover:underline"
+            className="text-primary cursor-pointer hover:underline"
             href="https://keepass.info/help/base/autotype.html"
-            target="_blank"
-            rel="noreferrer"
+            onClick={(e) => {
+              e.preventDefault();
+              openExternal("https://keepass.info/help/base/autotype.html");
+            }}
           >
             more…
           </a>
