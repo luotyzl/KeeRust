@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
+  Check,
   Database,
   Images,
   Keyboard,
@@ -13,11 +14,13 @@ import {
   Pencil,
   SlidersHorizontal,
   Sun,
+  Trash2,
   X,
 } from "lucide-react";
 import { setApp, useApp, getApp, sourceLabel, lock, dbName, markSyncPending } from "@/store";
 import { showToast } from "@/stores/toast";
 import { openExternal } from "@/lib/openExternal";
+import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/theme-provider";
 import { useSettings, setSetting } from "@/stores/settings";
 import type { CustomIconData, KdfKind, VaultData } from "@/types";
@@ -156,6 +159,7 @@ export default function SettingsScreen() {
   const [switchOpen, setSwitchOpen] = useState(false);
   const [iconsOpen, setIconsOpen] = useState(false);
   const [iconBusy, setIconBusy] = useState(false);
+  const [selectedIcons, setSelectedIcons] = useState<Set<string>>(new Set());
   const [kdfOpen, setKdfOpen] = useState(false);
   const [kdfKind, setKdfKind] = useState<KdfKind>("argon2d");
   const [kdfIterations, setKdfIterations] = useState("2");
@@ -297,17 +301,32 @@ export default function SettingsScreen() {
     }
   }
 
-  async function deleteIcon(uuid: string) {
-    if (iconBusy) return;
+  function openIcons() {
+    setSelectedIcons(new Set());
+    setIconsOpen(true);
+  }
+
+  function toggleIcon(uuid: string) {
+    setSelectedIcons((prev) => {
+      const next = new Set(prev);
+      if (next.has(uuid)) next.delete(uuid);
+      else next.add(uuid);
+      return next;
+    });
+  }
+
+  async function deleteSelectedIcons() {
+    if (iconBusy || selectedIcons.size === 0) return;
     setIconBusy(true);
     try {
-      const vault = await invoke<VaultData>("delete_custom_icon", {
+      const vault = await invoke<VaultData>("delete_custom_icons", {
         password: getApp().masterPassword,
-        uuid,
+        uuids: Array.from(selectedIcons),
       });
       setApp({ vaultData: vault });
       markSyncPending();
-      showToast("Icon deleted");
+      setSelectedIcons(new Set());
+      showToast("Icons deleted");
     } catch (err) {
       showToast("Failed: " + String(err));
     } finally {
@@ -546,7 +565,7 @@ export default function SettingsScreen() {
                           <KeyRound /> {genBusy ? "Generating…" : "Generate key file"}
                         </DropdownMenuItem>
                       )}
-                      <DropdownMenuItem onClick={() => setIconsOpen(true)}>
+                      <DropdownMenuItem onClick={openIcons}>
                         <Images /> Manage icons
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -597,8 +616,9 @@ export default function SettingsScreen() {
           <DialogHeader>
             <DialogTitle>Manage Icons</DialogTitle>
             <DialogDescription>
-              Custom icons saved in this database. Deleting one resets any entries
-              or groups using it to a default icon.
+              Custom icons saved in this database. Select the ones you want to
+              remove, then delete — entries or groups using a deleted icon revert
+              to a default icon (they're never left unreadable).
             </DialogDescription>
           </DialogHeader>
           {customIcons.length === 0 ? (
@@ -608,34 +628,59 @@ export default function SettingsScreen() {
           ) : (
             <ScrollArea viewportClassName="max-h-72">
               <div className="grid grid-cols-6 gap-2 p-0.5">
-                {customIcons.map((ci) => (
-                  <div
-                    key={ci.uuid}
-                    className="group bg-muted/40 relative flex aspect-square items-center justify-center rounded-md border"
-                  >
-                    <img
-                      className="size-7 rounded-sm object-contain"
-                      src={`data:image/png;base64,${ci.base64}`}
-                      alt=""
-                    />
+                {customIcons.map((ci) => {
+                  const selected = selectedIcons.has(ci.uuid);
+                  return (
                     <button
+                      key={ci.uuid}
                       type="button"
                       disabled={iconBusy}
-                      title="Delete icon"
-                      onClick={() => deleteIcon(ci.uuid)}
-                      className="bg-destructive text-destructive-foreground absolute -top-1.5 -right-1.5 hidden size-4 items-center justify-center rounded-full group-hover:flex disabled:opacity-60"
+                      title="Select icon"
+                      aria-pressed={selected}
+                      onClick={() => toggleIcon(ci.uuid)}
+                      className={cn(
+                        "bg-muted/40 relative flex aspect-square items-center justify-center rounded-md border transition disabled:opacity-60",
+                        selected
+                          ? "border-primary ring-primary ring-2"
+                          : "hover:border-ring",
+                      )}
                     >
-                      <X className="size-3" />
+                      <img
+                        className="size-7 rounded-sm object-contain"
+                        src={`data:image/png;base64,${ci.base64}`}
+                        alt=""
+                      />
+                      {selected && (
+                        <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full">
+                          <Check className="size-3" />
+                        </span>
+                      )}
                     </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </ScrollArea>
           )}
-          <DialogFooter>
-            <Button variant="outline" disabled={iconBusy} onClick={() => setIconsOpen(false)}>
-              Close
-            </Button>
+          <DialogFooter className="sm:justify-between">
+            <span className="text-muted-foreground self-center text-xs">
+              {selectedIcons.size > 0 ? `${selectedIcons.size} selected` : ""}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={iconBusy}
+                onClick={() => setIconsOpen(false)}
+              >
+                Close
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={iconBusy || selectedIcons.size === 0}
+                onClick={deleteSelectedIcons}
+              >
+                <Trash2 /> {iconBusy ? "Deleting…" : `Delete${selectedIcons.size ? ` (${selectedIcons.size})` : ""}`}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

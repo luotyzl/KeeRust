@@ -173,7 +173,7 @@ pub fn run() {
             vault::delete_entry_attachment,
             vault::save_entry,
             vault::save_group,
-            vault::delete_custom_icon,
+            vault::delete_custom_icons,
             vault::get_entry_xml,
             favicon::fetch_favicon,
             favicon::pick_icon_file,
