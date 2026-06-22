@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { createStore } from "./lib/store";
 import type {
   ActiveView,
@@ -116,6 +117,8 @@ export function findSelectedEntry(): EntryData | null {
 
 // Wipe everything on lock.
 export function lock(): void {
+  // Drop the backend's in-memory decrypted vault so no plaintext lingers.
+  invoke("lock_vault").catch(() => {});
   setApp({
     vaultData: null,
     masterPassword: "",

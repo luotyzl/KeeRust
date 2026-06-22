@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   List,
+  Loader2,
   Lock,
   Paperclip,
   Pencil,
@@ -178,8 +179,12 @@ export default function VaultSidebar() {
               {dbName()}
             </div>
             <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
-              {syncDot && (
-                <span className={cn("size-1.5 shrink-0 rounded-full", DOT_CLASS[syncDot])} />
+              {syncDot === "syncing" ? (
+                <Loader2 className="text-primary size-3 shrink-0 animate-spin" />
+              ) : (
+                syncDot && (
+                  <span className={cn("size-1.5 shrink-0 rounded-full", DOT_CLASS[syncDot])} />
+                )
               )}
               {vaultIsLocal ? "Local vault" : "WebDAV vault"}
             </div>

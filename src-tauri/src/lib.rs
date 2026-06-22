@@ -163,6 +163,7 @@ pub fn run() {
             vault::generate_key_file,
             vault::remove_key_file,
             vault::force_sync,
+            vault::lock_vault,
             vault::delete_entry,
             vault::delete_group,
             vault::restore_entry,

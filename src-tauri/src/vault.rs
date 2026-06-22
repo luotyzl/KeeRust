@@ -208,6 +208,51 @@ fn save_cache_rev(app: &tauri::AppHandle, rev: Option<&str>) {
 pub fn clear_db_cache(app: &tauri::AppHandle) {
     let _ = std::fs::remove_file(cache_path(app));
     let _ = std::fs::remove_file(cache_rev_path(app));
+    cache_invalidate();
+}
+
+// ── In-memory decrypted-database cache ────────────────────────────────────────
+//
+// Decrypting KDBX runs the Argon2 KDF (hundreds of ms). The backend is otherwise
+// stateless — every command re-reads the cached bytes and decrypts them — so a
+// single edit paid the KDF *twice*: once to open the database and once to save
+// it (KDBX regenerates the seed on save, so the save KDF is unavoidable). KeeWeb
+// keeps the vault decrypted in memory and pays only the save KDF; this cache does
+// the same. We key it by the exact bytes the database was decrypted from, so it's
+// self-invalidating: a save produces new bytes (we re-store under those), and an
+// external edit to a local file changes the bytes (a miss → fresh decrypt).
+//
+// The cache holds plaintext entries, so it is cleared on lock (`lock_vault`) and
+// whenever the active database changes (`clear_db_cache`).
+static DB_CACHE: std::sync::Mutex<Option<(Vec<u8>, keepass::Database)>> =
+    std::sync::Mutex::new(None);
+
+/// Return a clone of the cached database if it was decrypted from exactly `bytes`.
+fn cache_lookup(bytes: &[u8]) -> Option<keepass::Database> {
+    let guard = DB_CACHE.lock().ok()?;
+    let (cached_bytes, db) = guard.as_ref()?;
+    (cached_bytes.as_slice() == bytes).then(|| db.clone())
+}
+
+/// Remember `db` as the decryption of `bytes` for the next command to reuse.
+fn cache_store(bytes: &[u8], db: &keepass::Database) {
+    if let Ok(mut guard) = DB_CACHE.lock() {
+        *guard = Some((bytes.to_vec(), db.clone()));
+    }
+}
+
+/// Drop the in-memory decrypted database (on lock / database switch).
+fn cache_invalidate() {
+    if let Ok(mut guard) = DB_CACHE.lock() {
+        *guard = None;
+    }
+}
+
+/// Forget the in-memory decrypted vault. Called by the frontend when it locks so
+/// no plaintext lingers after the vault is closed.
+#[tauri::command]
+pub fn lock_vault() {
+    cache_invalidate();
 }
 
 // ── Open / persist helpers ──────────────────────────────────────────────────────
@@ -236,9 +281,16 @@ fn open_db(
     bytes: &[u8],
     password: &str,
 ) -> Result<keepass::Database, String> {
+    // Reuse the in-memory decryption when these are the exact bytes we last
+    // opened (or saved), skipping the Argon2 KDF entirely.
+    if let Some(db) = cache_lookup(bytes) {
+        return Ok(db);
+    }
     let mut cursor = Cursor::new(bytes);
-    keepass::Database::open(&mut cursor, db_key(app, password)?)
-        .map_err(|e| format!("Failed to open database: {e}"))
+    let db = keepass::Database::open(&mut cursor, db_key(app, password)?)
+        .map_err(|e| format!("Failed to open database: {e}"))?;
+    cache_store(bytes, &db);
+    Ok(db)
 }
 
 /// Whether two entries differ in everything but timestamps and history — the same
@@ -495,6 +547,7 @@ async fn reconcile_and_persist(
         let mut out = Vec::new();
         db.save(&mut out, save_key)
             .map_err(|e| format!("Failed to save: {e}"))?;
+        cache_store(&out, &db); // these bytes are now what's on disk
         source.put(out).await?;
         return Ok(db);
     }
@@ -523,6 +576,7 @@ async fn reconcile_and_persist(
             db.save(&mut out, save_key)
                 .map_err(|e| format!("Failed to save: {e}"))?;
             write_cache(app, &out);
+            cache_store(&out, &db); // cached bytes == in-memory db
             save_cache_rev(app, None); // cache no longer matches a known server revision
             app.emit("sync-status", serde_json::json!({"ok": false, "error": e}))
                 .ok();
@@ -536,9 +590,135 @@ async fn reconcile_and_persist(
     db.save(&mut out, save_key)
         .map_err(|e| format!("Failed to save: {e}"))?;
     write_cache(app, &out);
+    cache_store(&out, &db); // cached bytes == in-memory db (for the next edit)
     save_cache_rev(app, None);
     spawn_upload(app, config, out);
     Ok(db)
+}
+
+/// Persist a routine edit (entry/group add, edit, delete, restore — anything keyed
+/// by the user's password) and return *immediately*.
+///
+/// This is the fast path that keeps the UI responsive, mirroring KeeWeb: the local
+/// cache is written synchronously (the change is durable and instantly visible),
+/// but the WebDAV reconcile — fetch the server copy, merge concurrent edits, PUT —
+/// runs entirely in the background. The blocking `reconcile_and_persist` is kept
+/// only for key-management commands, where the save key differs from the password
+/// and correctness matters more than latency.
+///
+/// Returns the locally-saved database so the caller can build the response view
+/// without decrypting again. If a background merge later folds in changes made on
+/// another device, the UI is notified via `db-remote-updated` (the sync banner).
+async fn persist_fast(
+    app: &tauri::AppHandle,
+    source: &VaultSource,
+    base_bytes: &[u8],
+    db: keepass::Database,
+    password: &str,
+) -> Result<keepass::Database, String> {
+    let save_key = db_key(app, password)?;
+
+    // Local files: straight, synchronous write (no network in the path anyway).
+    if source.is_local() {
+        let mut out = Vec::new();
+        db.save(&mut out, save_key)
+            .map_err(|e| format!("Failed to save: {e}"))?;
+        cache_store(&out, &db);
+        source.put(out).await?;
+        return Ok(db);
+    }
+
+    // WebDAV: write the cache now and return; reconcile + upload off the UI thread.
+    let config = source
+        .webdav_config()
+        .expect("non-local source must be WebDAV")
+        .clone();
+    let mut out = Vec::new();
+    db.save(&mut out, save_key)
+        .map_err(|e| format!("Failed to save: {e}"))?;
+    write_cache(app, &out);
+    cache_store(&out, &db);
+    save_cache_rev(app, None); // cache no longer matches a known server revision
+    spawn_reconcile_upload(app, config, base_bytes.to_vec(), out, password.to_string());
+    Ok(db)
+}
+
+/// Background half of [`persist_fast`] for WebDAV: reconcile our just-saved local
+/// copy with the current server copy (lossless UUID merge if it diverged) and PUT
+/// the result. Announces the outcome via `sync-status`; if the merge pulled in
+/// remote changes, also fires `db-remote-updated` so the UI can refresh.
+fn spawn_reconcile_upload(
+    app: &tauri::AppHandle,
+    config: crate::webdav::WebDavConfig,
+    base_bytes: Vec<u8>,
+    local_bytes: Vec<u8>,
+    password: String,
+) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Has the server changed since the bytes we edited from?
+        let remote = match webdav_remote_bytes_if_changed(&app, &config, &base_bytes).await {
+            Ok(r) => r,
+            Err(e) => {
+                // Offline / server error: the edit is safe in the local cache and
+                // the next successful sync pushes it.
+                app.emit("sync-status", serde_json::json!({"ok": false, "error": e}))
+                    .ok();
+                return;
+            }
+        };
+
+        let (upload_bytes, merged_remote) = match remote {
+            // Server unchanged → push our saved bytes as-is.
+            None => (local_bytes, false),
+            // Server diverged → merge our change into it (lossless) and push the union.
+            Some(remote_bytes) => {
+                let merged = (|| -> Result<Vec<u8>, String> {
+                    // `local_bytes` is in the in-memory cache (no KDF); the remote
+                    // copy is decrypted here, off the UI thread.
+                    let mut local_db = open_db(&app, &local_bytes, &password)?;
+                    let mut remote_db = open_db(&app, &remote_bytes, &password)?;
+                    resolve_equal_timestamp_conflicts(&local_db, &mut remote_db);
+                    local_db
+                        .merge(&remote_db)
+                        .map_err(|e| format!("Failed to merge with the remote database: {e}"))?;
+                    fixup_merged_entries(&mut local_db, &remote_db);
+                    let mut out = Vec::new();
+                    local_db
+                        .save(&mut out, db_key(&app, &password)?)
+                        .map_err(|e| format!("Failed to save: {e}"))?;
+                    cache_store(&out, &local_db);
+                    write_cache(&app, &out);
+                    save_cache_rev(&app, None);
+                    Ok(out)
+                })();
+                match merged {
+                    Ok(out) => (out, true),
+                    Err(e) => {
+                        app.emit("sync-status", serde_json::json!({"ok": false, "error": e}))
+                            .ok();
+                        return;
+                    }
+                }
+            }
+        };
+
+        // The merge pulled in edits from another device the UI doesn't show yet.
+        if merged_remote {
+            app.emit("db-remote-updated", ()).ok();
+        }
+
+        match crate::webdav::put_db_bytes(&config, upload_bytes).await {
+            Ok(rev) => {
+                save_cache_rev(&app, rev.as_deref());
+                app.emit("sync-status", serde_json::json!({"ok": true})).ok();
+            }
+            Err(e) => {
+                app.emit("sync-status", serde_json::json!({"ok": false, "error": e}))
+                    .ok();
+            }
+        }
+    });
 }
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
@@ -1222,8 +1402,7 @@ where
 
     mutate(&mut db)?;
 
-    let save_key = db_key(&app, &password)?;
-    let db2 = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
+    let db2 = persist_fast(&app, &source, &bytes, db, &password).await?;
 
     Ok(build_vault_data(db2))
 }
@@ -1547,6 +1726,7 @@ pub async fn force_sync(
         .save(&mut merged_bytes, db_key(&app, &password)?)
         .map_err(|e| format!("Failed to save: {e}"))?;
     write_cache(&app, &merged_bytes);
+    cache_store(&merged_bytes, &local_db);
     save_cache_rev(&app, None);
     spawn_upload(&app, config, merged_bytes);
 
@@ -1690,12 +1870,11 @@ pub async fn save_entry(
         entry.uuid.clone()
     };
 
-    // Persist: local writes synchronously; WebDAV reconciles with the server
-    // (merging concurrent edits) then caches + PUTs in the background. The
-    // persisted (possibly merged) database is returned so we can build the
-    // response without re-decrypting.
-    let save_key = db_key(&app, &password)?;
-    let db2 = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
+    // Persist: local writes synchronously; WebDAV writes the cache now and
+    // reconciles with the server (merging concurrent edits) + PUTs in the
+    // background, so the call returns without waiting on the network. The saved
+    // database is returned so we can build the response without re-decrypting.
+    let db2 = persist_fast(&app, &source, &bytes, db, &password).await?;
 
     let result = SaveResult {
         vault: build_vault_data(db2),
@@ -1777,8 +1956,7 @@ pub async fn save_group(
         group.uuid.clone()
     };
 
-    let save_key = db_key(&app, &password)?;
-    let db2 = reconcile_and_persist(&app, &source, &bytes, db, &password, save_key).await?;
+    let db2 = persist_fast(&app, &source, &bytes, db, &password).await?;
 
     let result = SaveResult {
         vault: build_vault_data(db2),
