@@ -47,6 +47,19 @@ fn quit_app(app: &tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Non-fatal problems detected during startup (e.g. a global shortcut already
+/// claimed by another app) — drained by the frontend and shown as dismissible
+/// toasts once the UI is up. Collected at setup time because the WebView isn't
+/// listening yet, so we can't emit to it directly.
+#[derive(Default)]
+struct StartupWarnings(std::sync::Mutex<Vec<String>>);
+
+/// Return and clear the queued startup warnings (called once by the UI on load).
+#[tauri::command]
+fn take_startup_warnings(state: tauri::State<'_, StartupWarnings>) -> Vec<String> {
+    std::mem::take(&mut state.0.lock().unwrap())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ctrl+K = bring app forward; Alt+Shift+T (KeeWeb's default) and Ctrl+T both
@@ -98,6 +111,7 @@ pub fn run() {
                 .build(),
         )
         .manage(AutotypeState::default())
+        .manage(StartupWarnings::default())
         .setup(move |app| {
             // Create the main window in code (instead of tauri.conf) so we can
             // lock it down like KeeWeb does at the app level: disable the
@@ -120,18 +134,28 @@ pub fn run() {
             #[cfg(not(windows))]
             let _ = &main_window;
 
-            // Ignore failures (e.g. a shortcut already taken system-wide) so the
-            // app still launches.
-            let _ = app.global_shortcut().register(ctrl_k);
-            let _ = app.global_shortcut().register(autotype_sc);
-            // Ctrl+T is a popular hotkey (e.g. "new tab" in browsers), so it may
-            // already be claimed by another app — register it best-effort and just
-            // log if it's unavailable, leaving Alt+Shift+T as the fallback.
-            if let Err(e) = app.global_shortcut().register(autotype_ctrl_t) {
-                eprintln!("Could not register Ctrl+T for auto-type: {e}");
+            // Register global shortcuts best-effort: a shortcut already claimed by
+            // another app is skipped (the app still launches) and its name is
+            // queued so the UI can warn the user with a dismissible toast.
+            let mut failed: Vec<&str> = Vec::new();
+            for (sc, label) in [
+                (ctrl_k, "Ctrl+K (show KeeRust)"),
+                (autotype_sc, "Alt+Shift+T (auto-type)"),
+                (autotype_ctrl_t, "Ctrl+T (auto-type)"),
+                (otp_copy_sc, "Alt+Shift+O (copy one-time code)"),
+            ] {
+                if let Err(e) = app.global_shortcut().register(sc) {
+                    eprintln!("Could not register {label}: {e}");
+                    failed.push(label);
+                }
             }
-            if let Err(e) = app.global_shortcut().register(otp_copy_sc) {
-                eprintln!("Could not register Alt+Shift+O for OTP copy: {e}");
+            if !failed.is_empty() {
+                let msg = format!(
+                    "Some keyboard shortcuts couldn't be registered (another app may \
+                     already use them): {}.",
+                    failed.join(", ")
+                );
+                app.state::<StartupWarnings>().0.lock().unwrap().push(msg);
             }
 
             // System tray: lets "close to tray" restore or quit the app.
@@ -200,6 +224,7 @@ pub fn run() {
             autotype::autotype_sequence,
             autotype::focus_main_window,
             clipboard::set_clipboard,
+            take_startup_warnings,
             shell::open_external,
         ])
         .run(tauri::generate_context!())

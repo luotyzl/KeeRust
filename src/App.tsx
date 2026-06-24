@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp, setApp, applySource, flashSyncDot, setSyncDot } from "./store";
 import { getSettings } from "./stores/settings";
 import { installAutoLock, lockOnMinimizeIfEnabled } from "./lib/autolock";
-import { showToast } from "./stores/toast";
+import { showToast, showWarning } from "./stores/toast";
 import { handleAutoType } from "./stores/autotype";
 import type { VaultSource } from "./types";
 
@@ -61,6 +61,12 @@ export default function App() {
           if (!ok) showToast("WebDAV sync failed: " + error);
         })
       );
+
+      // Surface any non-fatal startup problems (e.g. a global shortcut already
+      // claimed by another app) as dismissible warning toasts.
+      invoke<string[]>("take_startup_warnings")
+        .then((warnings) => warnings.forEach(showWarning))
+        .catch(() => {});
 
       // Auto-lock: inactivity timer + minimize + OS-lock triggers.
       unlisteners.push(await installAutoLock());
