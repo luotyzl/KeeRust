@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { MoreHorizontal } from "lucide-react";
 import { useApp } from "@/store";
 import type { EntryData } from "@/types";
@@ -10,6 +11,7 @@ import {
   selectStore,
   useSelect,
   typeCreds,
+  copyOtp,
   pickField,
   closeSelectView,
 } from "@/stores/autotype";
@@ -32,15 +34,56 @@ interface MenuState {
   items: { label: string; run: () => void }[];
 }
 
+// Live TOTP code for a single row, refreshed every second (recomputed only when
+// the step rolls over, like OtpWidget).
+function OtpCell({ otpUri }: { otpUri: string }) {
+  const [code, setCode] = useState("------");
+  const codeRef = useRef("");
+
+  useEffect(() => {
+    const params = parseOtpUri(otpUri);
+    if (!params.secret) return;
+    let cancelled = false;
+
+    async function refresh() {
+      const elapsed = Math.floor(Date.now() / 1000) % params.period;
+      if (elapsed === 0 || !codeRef.current) {
+        const c = await computeTOTP(
+          params.secret,
+          params.period,
+          params.digits,
+          params.algorithm
+        );
+        if (!cancelled) {
+          codeRef.current = c || "";
+          setCode(codeRef.current || "------");
+        }
+      }
+    }
+
+    refresh();
+    const id = setInterval(refresh, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [otpUri]);
+
+  return <span className="font-mono-code tabular-nums tracking-wider">{code}</span>;
+}
+
 export default function SelectScreen() {
   const vaultData = useApp((s) => s.vaultData);
   const filter = useSelect((s) => s.filter);
   const index = useSelect((s) => s.index);
+  const otpCopy = useSelect((s) => s.otpCopy);
 
-  const entries = useMemo<EntryData[]>(
-    () => (filter ? filterGetEntries(vaultData, filter) : []),
-    [vaultData, filter]
-  );
+  const entries = useMemo<EntryData[]>(() => {
+    if (!filter) return [];
+    const list = filterGetEntries(vaultData, filter);
+    // OTP-copy mode lists only entries that have a one-time code.
+    return otpCopy ? list.filter((e) => e.otp_uri) : list;
+  }, [vaultData, filter, otpCopy]);
 
   const [menu, setMenu] = useState<MenuState>({ visible: false, x: 0, y: 0, items: [] });
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -48,9 +91,24 @@ export default function SelectScreen() {
   const entriesRef = useRef(entries);
   const indexRef = useRef(index);
   const menuVisibleRef = useRef(menu.visible);
+  const otpCopyRef = useRef(otpCopy);
   entriesRef.current = entries;
   indexRef.current = index;
   menuVisibleRef.current = menu.visible;
+  otpCopyRef.current = otpCopy;
+
+  // Act on the entry per the active mode: OTP-copy → copy the code to the
+  // clipboard then minimize (so focus returns to the app the user was in), else
+  // auto-type the full credentials.
+  async function pickEntry(e: EntryData): Promise<void> {
+    closeSelectView();
+    if (otpCopyRef.current) {
+      await copyOtp(e);
+      await getCurrentWindow().minimize();
+    } else {
+      typeCreds(e);
+    }
+  }
 
   function setIndex(i: number) {
     selectStore.setState({ index: i });
@@ -64,6 +122,10 @@ export default function SelectScreen() {
   const message = (() => {
     if (!filter) return "";
     const target = filter.title || shortUrl(filter.url || "");
+    if (otpCopy)
+      return target
+        ? `Copy a one-time code for ${target}`
+        : "Select an entry to copy its one-time code";
     return target ? `Select a password for ${target}` : "Select an entry to auto-type";
   })();
 
@@ -151,8 +213,7 @@ export default function SelectScreen() {
 
   function rowClick(ev: MouseEvent, e: EntryData) {
     if ((ev.target as HTMLElement).closest("[data-actions-btn]")) return;
-    closeSelectView();
-    typeCreds(e);
+    pickEntry(e);
   }
 
   useEffect(() => {
@@ -178,10 +239,7 @@ export default function SelectScreen() {
           if (e.shiftKey) openMenuForSelected();
           else if (e.ctrlKey || e.metaKey) pickField(en.password);
           else if (e.altKey) pickField(en.username);
-          else {
-            closeSelectView();
-            typeCreds(en);
-          }
+          else pickEntry(en);
         }
         e.preventDefault();
       } else if (e.key === "Escape") {
@@ -271,6 +329,7 @@ export default function SelectScreen() {
                 <TableHead>Title</TableHead>
                 <TableHead>Username</TableHead>
                 <TableHead>Website</TableHead>
+                <TableHead className="w-28">2FA Code</TableHead>
                 <TableHead className="w-20 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -292,6 +351,9 @@ export default function SelectScreen() {
                   </TableCell>
                   <TableCell className="text-muted-foreground truncate" title={e.url || ""}>
                     {e.url || ""}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {e.otp_uri ? <OtpCell otpUri={e.otp_uri} /> : ""}
                   </TableCell>
                   <TableCell className="text-center">
                     <Button

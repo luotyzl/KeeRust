@@ -1,5 +1,6 @@
 mod attachments;
 mod autotype;
+mod clipboard;
 mod favicon;
 mod shell;
 mod source;
@@ -49,12 +50,18 @@ fn quit_app(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ctrl+K = bring app forward; Alt+Shift+T (KeeWeb's default) and Ctrl+T both
-    // trigger auto-type.
+    // trigger full auto-type; Alt+Shift+O copies the matched entry's OTP to the
+    // clipboard.
     let ctrl_k = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK);
     let autotype_sc = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyT);
     let autotype_ctrl_t = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyT);
-    let (ctrl_k_h, autotype_h, autotype_ctrl_t_h) =
-        (ctrl_k.clone(), autotype_sc.clone(), autotype_ctrl_t.clone());
+    let otp_copy_sc = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyO);
+    let (ctrl_k_h, autotype_h, autotype_ctrl_t_h, otp_copy_h) = (
+        ctrl_k.clone(),
+        autotype_sc.clone(),
+        autotype_ctrl_t.clone(),
+        otp_copy_sc.clone(),
+    );
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -66,7 +73,13 @@ pub fn run() {
                     }
                     if shortcut == &ctrl_k_h {
                         show_main_window(app);
-                    } else if shortcut == &autotype_h || shortcut == &autotype_ctrl_t_h {
+                    } else if shortcut == &autotype_h
+                        || shortcut == &autotype_ctrl_t_h
+                        || shortcut == &otp_copy_h
+                    {
+                        // Alt+Shift+O copies the OTP to the clipboard; the others
+                        // type full credentials into the target app.
+                        let otp = shortcut == &otp_copy_h;
                         // Capture the target window NOW, before we touch focus.
                         let (hwnd, title, url) = autotype::capture_foreground();
                         // Auto-type targets *other* applications. If KeeRust itself
@@ -78,7 +91,8 @@ pub fn run() {
                         let state = app.state::<AutotypeState>();
                         *state.target_hwnd.lock().unwrap() =
                             if hwnd != 0 { Some(hwnd) } else { None };
-                        let _ = app.emit("auto-type", autotype::AutoTypeTrigger { title, url });
+                        let _ =
+                            app.emit("auto-type", autotype::AutoTypeTrigger { title, url, otp });
                     }
                 })
                 .build(),
@@ -115,6 +129,9 @@ pub fn run() {
             // log if it's unavailable, leaving Alt+Shift+T as the fallback.
             if let Err(e) = app.global_shortcut().register(autotype_ctrl_t) {
                 eprintln!("Could not register Ctrl+T for auto-type: {e}");
+            }
+            if let Err(e) = app.global_shortcut().register(otp_copy_sc) {
+                eprintln!("Could not register Alt+Shift+O for OTP copy: {e}");
             }
 
             // System tray: lets "close to tray" restore or quit the app.
@@ -182,6 +199,7 @@ pub fn run() {
             autotype::autotype_text,
             autotype::autotype_sequence,
             autotype::focus_main_window,
+            clipboard::set_clipboard,
             shell::open_external,
         ])
         .run(tauri::generate_context!())

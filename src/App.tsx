@@ -24,6 +24,7 @@ import { Toaster } from "./components/ui/sonner";
 interface AutoTypePayload {
   title?: string;
   url?: string | null;
+  otp?: boolean;
 }
 interface SyncStatusPayload {
   ok: boolean;
@@ -41,7 +42,11 @@ export default function App() {
       // Tauri event: auto-type global hotkey was pressed.
       unlisteners.push(
         await listen<AutoTypePayload>("auto-type", (ev) =>
-          handleAutoType(ev.payload?.title || "", ev.payload?.url ?? null)
+          handleAutoType(
+            ev.payload?.title || "",
+            ev.payload?.url ?? null,
+            ev.payload?.otp ?? false
+          )
         )
       );
       // Tauri event: background WebDAV sync found a newer remote version.

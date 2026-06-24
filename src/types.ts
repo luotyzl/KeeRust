@@ -177,6 +177,8 @@ export type ActiveView =
 export interface WindowInfo {
   title: string;
   url: string | null;
+  // True when triggered by the OTP-copy hotkey (Alt+Shift+O).
+  otp?: boolean;
 }
 
 export interface SelectFilter {

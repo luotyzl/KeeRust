@@ -10,15 +10,19 @@ import {
   filterGetEntries,
   makeFilter,
 } from "../lib/autotype";
+import { computeTOTP, parseOtpUri } from "../lib/totp";
 
 interface SelectState {
   filter: SelectFilter | null;
   index: number;
+  // When true (Alt+Shift+O), picking an entry copies its OTP to the clipboard.
+  otpCopy: boolean;
 }
 
 export const selectStore = createStore<SelectState>({
   filter: null,
   index: 0,
+  otpCopy: false,
 });
 
 export const useSelect = selectStore.use;
@@ -49,8 +53,30 @@ export function typeField(text: string): Promise<void> {
   });
 }
 
+// Copy the entry's one-time code to the clipboard (Alt+Shift+O hotkey). The
+// write goes through Rust because the WebView clipboard is blocked while another
+// app holds focus — exactly when the global hotkey fires.
+export async function copyOtp(e: EntryData): Promise<void> {
+  if (!e.otp_uri) {
+    showToast(`"${e.title || "Entry"}" has no one-time code`);
+    return;
+  }
+  try {
+    const { secret, period, digits, algorithm } = parseOtpUri(e.otp_uri);
+    const code = await computeTOTP(secret, period, digits, algorithm);
+    if (!code) {
+      showToast("Could not generate one-time code");
+      return;
+    }
+    await invoke("set_clipboard", { text: code });
+    showToast("One-time code copied");
+  } catch (err) {
+    showToast("Copy failed: " + String(err));
+  }
+}
+
 export function closeSelectView(): void {
-  selectStore.setState({ filter: null, index: 0 });
+  selectStore.setState({ filter: null, index: 0, otpCopy: false });
   setApp({ screen: "vault" });
 }
 
@@ -60,15 +86,19 @@ export function pickField(text: string): void {
   typeField(text);
 }
 
-async function openSelectView(filter: SelectFilter): Promise<void> {
-  selectStore.setState({ filter, index: 0 });
+async function openSelectView(
+  filter: SelectFilter,
+  otpCopy: boolean
+): Promise<void> {
+  selectStore.setState({ filter, index: 0, otpCopy });
   await invoke("focus_main_window"); // bring the app forward from the taskbar
   setApp({ screen: "select" });
 }
 
 async function runAutotypeForWindow(
   title: string,
-  url: string | null
+  url: string | null,
+  otpCopy: boolean
 ): Promise<void> {
   const filter = makeFilter(buildWindowInfo(title, url));
   let matches = filterGetEntries(getApp().vaultData, filter);
@@ -83,29 +113,35 @@ async function runAutotypeForWindow(
     if (matches.length === 0 && filter.useTitle) filter.useTitle = false;
   }
 
-  // Exactly one match → type it straight away (KeeWeb directAutotype),
+  // OTP-copy mode only ever targets entries that actually have a one-time code.
+  if (otpCopy) matches = matches.filter((e) => e.otp_uri);
+
+  // Exactly one match → act on it straight away (KeeWeb directAutotype),
   // including when the relaxed filter narrows down to a single candidate.
   if (matches.length === 1) {
-    await typeCreds(matches[0]);
+    if (otpCopy) await copyOtp(matches[0]);
+    else await typeCreds(matches[0]);
     return;
   }
-  await openSelectView(filter);
+  await openSelectView(filter, otpCopy);
 }
 
-// Entry point from the Tauri "auto-type" global-hotkey event.
+// Entry point from the Tauri "auto-type" global-hotkey event. `otpCopy` is set
+// by the Alt+Shift+O hotkey to copy just the matched entry's one-time code.
 export async function handleAutoType(
   title: string,
-  url: string | null
+  url: string | null,
+  otpCopy = false
 ): Promise<void> {
   const app = getApp();
   if (!app.vaultData || !app.masterPassword) {
     // Locked — bring the app forward, unlock, then resume for this window.
-    setApp({ pendingAutotype: { title, url } });
+    setApp({ pendingAutotype: { title, url, otp: otpCopy } });
     await invoke("focus_main_window");
     setApp({ screen: "unlock" });
     return;
   }
-  await runAutotypeForWindow(title, url);
+  await runAutotypeForWindow(title, url, otpCopy);
 }
 
 // Resume a hotkey that arrived while the vault was locked (called after unlock).
@@ -113,5 +149,5 @@ export async function resumePendingAutotype(): Promise<void> {
   const pending = getApp().pendingAutotype;
   if (!pending) return;
   setApp({ pendingAutotype: null });
-  await runAutotypeForWindow(pending.title, pending.url);
+  await runAutotypeForWindow(pending.title, pending.url, pending.otp ?? false);
 }

@@ -17,6 +17,9 @@ pub struct AutotypeState {
 pub struct AutoTypeTrigger {
     pub title: String,
     pub url: Option<String>,
+    /// When true (the Alt+Shift+O hotkey), the frontend copies the matched
+    /// entry's one-time code to the clipboard instead of typing credentials.
+    pub otp: bool,
 }
 
 /// One primitive auto-type step. The frontend parses a KeeWeb keystroke sequence

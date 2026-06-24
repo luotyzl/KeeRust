@@ -471,6 +471,12 @@ export default function SettingsScreen() {
               <span className="text-muted-foreground">or</span>
               <Shortcut keys={["Ctrl", "T"]} />
             </div>
+            <p className="text-muted-foreground text-sm">
+              Or copy the matching entry's one-time code (OTP) to the clipboard:
+            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Shortcut keys={["Alt", "Shift", "O"]} />
+            </div>
           </CardContent>
         </Card>
 
