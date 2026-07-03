@@ -200,10 +200,10 @@ export default function EntryDetail() {
       </div>
 
       {urlRows.length > 0 && (
-        <>
-          {(urlRows.length > 1 ? "<SectionHeader>URLs</SectionHeader>" : "")}
+        <div className="mt-5">
+          {urlRows.length > 1 && <SectionHeader>URLs</SectionHeader>}
           <EntryUrls urls={urlRows} />
-        </>
+        </div>
       )}
 
       {otherCustomFields.length > 0 && (

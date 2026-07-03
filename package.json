@@ -1,9 +1,9 @@
 {
   "name": "keerust",
   "private": true,
-  "version": "2026.6.24",
+  "version": "2026.7.3",
   "type": "module",
-  "packageManager": "yarn@4.10.3",
+  "packageManager": "yarn@4.17.0",
   "scripts": {
     "start": "tauri dev",
     "dev": "vite",

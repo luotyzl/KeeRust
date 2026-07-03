@@ -25,7 +25,13 @@ export default function DetailField({
   const strength = isPassword && !noStrength ? estimateStrength(value) : null;
 
   return (
-    <div className="space-y-1">
+    // Double-click anywhere in the field (including empty space) copies the
+    // value — same as clicking the copy button.
+    <div
+      className="space-y-1"
+      onDoubleClick={() => copyText(value, label)}
+      title="Double-click to copy"
+    >
       <div className="text-muted-foreground text-xs break-words">{label}</div>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">

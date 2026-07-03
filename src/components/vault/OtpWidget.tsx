@@ -54,7 +54,13 @@ export default function OtpWidget({
     remaining <= 5 ? "bg-destructive" : remaining <= 10 ? "bg-yellow-500" : "bg-primary";
 
   return (
-    <div className="space-y-1.5">
+    // Double-click anywhere in the field (including empty space) copies the
+    // current code — same as clicking the copy button.
+    <div
+      className="space-y-1.5"
+      onDoubleClick={() => code !== "------" && copyText(code, "OTP")}
+      title="Double-click to copy"
+    >
       <div className="text-muted-foreground text-xs">2FA Code</div>
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono-code text-2xl font-bold tracking-[0.1em] tabular-nums">

@@ -7,6 +7,7 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useApp, getApp, setApp } from "@/store";
 import { modalStore, openCreateModal } from "@/stores/modals";
@@ -95,13 +96,35 @@ export default function VaultHeader() {
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
         <Input
           ref={searchRef}
-          type="search"
+          type="text"
           placeholder="Search entries…"
           autoComplete="off"
-          className="h-8 pr-9 pl-8"
+          className="h-8 pr-14 pl-8"
           value={searchQuery}
           onChange={(e) => setApp({ searchQuery: e.target.value, selectedEntryUuid: null })}
+          onKeyDown={(e) => {
+            // Esc clears the search (mirrors the native search input behavior
+            // we lost by switching to type="text").
+            if (e.key === "Escape" && searchQuery) {
+              e.preventDefault();
+              setApp({ searchQuery: "", selectedEntryUuid: null });
+            }
+          }}
         />
+        {searchQuery && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground absolute top-1/2 right-7 size-7 -translate-y-1/2"
+            title="Clear search"
+            onClick={() => {
+              setApp({ searchQuery: "", selectedEntryUuid: null });
+              searchRef.current?.focus();
+            }}
+          >
+            <X className="size-3.5" />
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
